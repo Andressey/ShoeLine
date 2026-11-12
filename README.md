@@ -1,79 +1,60 @@
-# Shoeline — Full-stack e-commerce starter
+# Shoeline
 
-This project upgrades the Shoeline storefront into a Node.js + Express application with SQLite, server-side customer accounts, and Stripe Checkout.
+A polished, responsive sneaker storefront backed by Supabase Auth and Postgres, with a customer account area and a separate owner dashboard. Vercel serves the static storefront and a small configuration function; the browser talks to Supabase through its public key and row-level security.
 
-## Requirements
-- Node.js 20 or newer
-- npm
-- Stripe account for payment testing (optional to browse the site; required for hosted checkout)
+## Stack
 
-## Run locally
-1. Extract this project.
-2. Open a terminal in the `Shoeline` project directory.
-3. Install packages:
-   ```bash
-   npm install
+- Static HTML, CSS and JavaScript storefront (no framework build step)
+- Supabase Auth and Postgres with row-level security
+- Vercel static hosting and a serverless public-config endpoint
+- Cash on delivery order flow with server-validated prices, stock locking and transactional order creation
+
+## Set up Supabase
+
+1. Open the Supabase project and go to **SQL Editor**.
+2. Run [`supabase/migrations/20261112000000_shoeline_commerce.sql`](./supabase/migrations/20261112000000_shoeline_commerce.sql).
+3. In **Project Settings → API Keys**, copy the project URL and the public `anon`/publishable key. Never use a `service_role` or secret key in this app.
+4. In **Authentication → URL Configuration**, set the Site URL to the deployed Vercel URL. Add any preview or local URLs to the redirect allow list if you enable email confirmation or OAuth.
+5. After the store owner creates and confirms their customer account, grant owner access in the Supabase SQL Editor:
+
+   ```sql
+   update public.profiles
+   set role = 'admin'
+   where id = (
+     select id
+     from auth.users
+     where lower(email) = lower('OWNER_EMAIL')
+   );
    ```
-4. Copy `.env.example` to `.env`.
-5. Set a long random `SESSION_SECRET`. For example, generate one with:
-   ```bash
-   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
-   ```
-6. Add your Stripe **test-mode** secret key to `STRIPE_SECRET_KEY` in `.env`.
-7. Start the website:
-   ```bash
-   npm start
-   ```
-8. Visit http://localhost:3000
 
-The SQLite database and session store are created automatically when the app starts. The sample catalog is seeded on startup.
+   Replace `OWNER_EMAIL` with the exact owner account email. New signups are customers by default; the owner dashboard is only shown to profiles with the `admin` role.
 
-## Stripe Checkout (test mode)
-- Create/use Stripe test keys from your Stripe Dashboard.
-- Set `STRIPE_SECRET_KEY=sk_test_...` in `.env`.
-- Configure a webhook endpoint for local development:
-  ```bash
-  stripe listen --forward-to localhost:3000/api/stripe/webhook
-  ```
-- Copy the webhook signing secret shown by Stripe CLI into `STRIPE_WEBHOOK_SECRET`.
-- Test using Stripe's published test card numbers in Stripe's test environment only. Never enter real card details in a test site.
-- Stripe redirects the buyer to Stripe-hosted Checkout. The app marks an order as paid only after a verified webhook event.
+The migration creates profiles, products and images, addresses, carts and cart items, wishlists, orders and immutable order items, payments, inventory movements, returns, product reviews, promotions, business accounts and members, quote requests and quote items, requisition lists and items, and admin activity logs. It seeds the eight starter products and can be re-run safely.
 
-## What's included
-- Shoeline responsive storefront, product filtering/search, wishlists, product comparison
-- SQLite products and inventory fields
-- Customer registration and login with bcrypt password hashing
-- HttpOnly session cookie (server-side session store)
-- Stripe-hosted checkout session creation
-- Verified Stripe webhook endpoint for payment status
-- Customer order history
-- Return request API
-- Business quote request API
-- Basic login rate limiting and Helmet security headers
+## Deploy on Vercel
 
-## Adobe Commerce-inspired feature map
-Adobe's product page describes AI-driven commerce, digital storefronts, personalized commerce, composable architecture, scalable operations, and B2B commerce. Its B2B documentation includes company accounts, shared catalogs/pricing, quote negotiation, quick order, requisition lists, purchase-order approvals, and company roles. See:
-- https://business.adobe.com/products/commerce.html
-- https://experienceleague.adobe.com/en/docs/commerce-admin/b2b/introduction
+The repository is connected to Vercel. In the **ShoeLine** project, add these environment variables for Production and Preview:
 
-This project is a custom starter inspired by those feature categories, not a clone of Adobe Commerce. The starter has working basic storefront/account/order/payment flows and simple B2B quote requests. Enterprise features such as AI/semantic search, multi-store administration, company roles and approval workflows, shared catalogs, analytics dashboards, ERP/CRM/PIM integrations, and sophisticated inventory/fulfillment are roadmap items and need additional development/services.
+| Name | Value |
+| --- | --- |
+| `SUPABASE_URL` | Your Supabase project URL |
+| `SUPABASE_ANON_KEY` | Your public anon/publishable key |
 
-## Important production checklist
-This is a starter for development and learning, not ready for public production deployment. Before launch:
-- Use HTTPS and a production-grade hosting platform.
-- Set a strong, private `SESSION_SECRET`; never use the development fallback.
-- Use a managed database such as PostgreSQL, with migrations, backups, and access controls.
-- Configure session cookie security, proxy settings, CSRF protections, and account recovery/email verification.
-- Add admin authentication and role-based permissions before exposing product/order administration.
-- Implement inventory reservation and decrement only after verified payment; handle refunds, duplicate webhooks, and order reconciliation idempotently.
-- Configure shipping, tax, delivery fees, and Philippine payment methods as needed.
-- Stripe card availability and supported local payment methods depend on Stripe account country and configuration. For GCash or Maya, use a supported provider/official merchant integration rather than collecting credentials yourself.
-- Add privacy policy, terms, refund policy, consent and data-retention controls.
-- Validate inputs, add monitoring, backups, logging, security tests, and load tests.
-- Review PCI, privacy, consumer protection, tax, and local legal requirements with qualified professionals.
+Save the variables and redeploy the latest `main` commit. The repo’s [`vercel.json`](./vercel.json) serves the `public` directory, while [`api/config.js`](./api/config.js) exposes only the public Supabase configuration. No service-role key or database password belongs in Vercel or Git.
 
-## Security notes
-- Passwords are hashed with bcrypt and are never saved to localStorage.
-- The browser stores only a small display profile for convenience; the server session is the authentication authority.
-- Stripe Checkout hosts the payment form; this site does not collect card numbers.
-- Do not commit `.env`, keys, or database files.
+## Features
+
+- Searchable, filterable catalog with animated ambient art, 3D-style product motion and responsive layouts
+- Supabase Auth sign-up/sign-in, customer profile, wishlist, order history, saved delivery addresses and returns
+- Transactional order creation that re-checks live prices and stock, reserves inventory and creates pending orders
+- Role-protected owner dashboard for products, inventory, order status, customers, returns and team quotes
+- Business quote submissions, promotion/review schema, customer carts and requisition lists
+- Accessible modal interactions and reduced-motion support
+
+The checkout currently supports **cash on delivery**. It does not collect card details or claim to process online payments. Add a payment provider later through a server-side integration and verified webhooks.
+
+## Local preview
+
+With Node.js installed, run `npx serve public` from the project directory. For the Supabase-backed app, configure the two variables in `.env` and run the Vercel development server (`npx vercel dev`) so `/api/config` is available. Do not commit `.env`.
+
+The Supabase public key is intended for browser use; table access is constrained by row-level security. Supabase Auth tokens are stored by this frontend in browser local storage, so keep dependencies and inline/script injection under control. Review Supabase Auth confirmation settings, privacy requirements, backup plans, payment, tax and delivery operations before a production launch.
