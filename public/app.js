@@ -1255,8 +1255,41 @@
     });
   }
 
+  function initializeHeroSlideshow() {
+    const heroArt = $(".hero-art");
+    if (!heroArt) return;
+    const slides = $$(".hero-product-photo", heroArt);
+    if (slides.length < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const slideNumber = $("#heroSlideNumber");
+    let activeIndex = Math.max(0, slides.findIndex(slide => slide.classList.contains("is-active")));
+    let rotationTimer = null;
+    let popTimer = null;
+
+    const rotate = () => {
+      slides[activeIndex].classList.remove("is-active", "is-entering");
+      activeIndex = (activeIndex + 1) % slides.length;
+      const nextSlide = slides[activeIndex];
+      nextSlide.classList.add("is-active", "is-entering");
+      if (slideNumber) slideNumber.textContent = String(activeIndex + 1).padStart(2, "0");
+      if (popTimer !== null) window.clearTimeout(popTimer);
+      popTimer = window.setTimeout(() => nextSlide.classList.remove("is-entering"), 750);
+    };
+
+    const syncRotation = () => {
+      if (rotationTimer !== null) window.clearInterval(rotationTimer);
+      rotationTimer = document.visibilityState === "visible"
+        ? window.setInterval(rotate, 4200)
+        : null;
+    };
+
+    document.addEventListener("visibilitychange", syncRotation);
+    syncRotation();
+  }
+
   async function initialize() {
     registerHandlers();
+    initializeHeroSlideshow();
     tryAutoplayBackgroundMusic();
     initializeMotion();
     try {
