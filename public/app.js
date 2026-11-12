@@ -147,13 +147,15 @@
 
   function renderProducts() {
     const products = visibleProducts();
+    const grid = $("#productGrid");
     $("#resultsCount").textContent = `${products.length} ${products.length === 1 ? "pair" : "pairs"}`;
-    $("#productGrid").innerHTML = products.length ? products.map(product => `
+    grid.setAttribute("aria-labelledby", `filter-${state.filter.toLowerCase()}`);
+    grid.innerHTML = products.length ? products.map(product => `
       <article class="product-card" data-product-card>
         <div class="product-visual" style="--product-color:${escapeHtml(product.color)}">
           <span class="product-brand">${escapeHtml(product.brand)}</span>
           ${product.badge ? `<span class="product-badge">${escapeHtml(product.badge)}</span>` : ""}
-          <span class="product-shoe" aria-hidden="true">${escapeHtml(product.icon || "👟")}</span>
+          <svg class="product-shoe" viewBox="0 0 760 460" aria-hidden="true" focusable="false"><use href="#sneaker-artwork"></use></svg>
           <button class="wish-toggle ${state.wishlist.has(product.id) ? "saved" : ""}" type="button" data-action="toggle-wish" data-id="${escapeHtml(product.id)}" aria-label="${state.wishlist.has(product.id) ? "Remove from" : "Add to"} wishlist">${state.wishlist.has(product.id) ? "♥" : "♡"}</button>
         </div>
         <div class="product-details">
@@ -164,12 +166,41 @@
           </div>
         </div>
       </article>`).join("") : `<div class="empty-state"><h3>No pairs found.</h3><p>Try another search or choose a different filter.</p></div>`;
+    grid.setAttribute("aria-busy", "false");
   }
 
   function setFilter(filter) {
     state.filter = filter;
-    $$(".filter-chip").forEach(button => button.classList.toggle("active", button.dataset.filter === filter));
-    renderProducts();
+    $$(".filter-chip").forEach(button => {
+      const selected = button.dataset.filter === filter;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1;
+    });
+    const grid = $("#productGrid");
+    grid.setAttribute("aria-busy", "true");
+    grid.classList.add("is-transitioning");
+    requestAnimationFrame(() => {
+      renderProducts();
+      requestAnimationFrame(() => grid.classList.remove("is-transitioning"));
+    });
+  }
+
+  function initializeMotion() {
+    const targets = $$("[data-reveal]");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
+      targets.forEach(target => target.classList.add("is-visible"));
+      return;
+    }
+    document.body.classList.add("motion-ready");
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("is-visible");
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -24px 0px" });
+    targets.forEach(target => observer.observe(target));
   }
 
   function openModal(title, content, options = {}) {
@@ -716,13 +747,38 @@
       }
     }, true);
 
+    const heroArt = $(".hero-art");
+    if (heroArt && window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      heroArt.addEventListener("pointermove", event => {
+        const bounds = heroArt.getBoundingClientRect();
+        heroArt.style.setProperty("--pointer-x", `${((event.clientX - bounds.left) / bounds.width - 0.5) * 18}px`);
+        heroArt.style.setProperty("--pointer-y", `${((event.clientY - bounds.top) / bounds.height - 0.5) * 14}px`);
+      });
+      heroArt.addEventListener("pointerleave", () => {
+        heroArt.style.removeProperty("--pointer-x");
+        heroArt.style.removeProperty("--pointer-y");
+      });
+    }
+
     document.addEventListener("keydown", event => {
+      const currentTab = event.target.closest?.('#filters [role="tab"]');
+      if (currentTab && ["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+        const tabs = $$('#filters [role="tab"]');
+        const currentIndex = tabs.indexOf(currentTab);
+        const nextIndex = event.key === "Home" ? 0
+          : event.key === "End" ? tabs.length - 1
+            : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        tabs[nextIndex].focus();
+        setFilter(tabs[nextIndex].dataset.filter);
+      }
       if (event.key === "Escape") closeModal();
     });
   }
 
   async function initialize() {
     registerHandlers();
+    initializeMotion();
     try {
       await loadConfig();
       if (state.session?.expires_at && state.session.expires_at < Math.floor(Date.now() / 1000) + 60) await refreshSession();
@@ -745,6 +801,7 @@
     } catch (error) {
       $("#resultsCount").textContent = "Collection unavailable";
       $("#productGrid").innerHTML = `<div class="empty-state"><h3>We’re making a little room.</h3><p>${escapeHtml(error.message || "The collection is temporarily unavailable.")}</p></div>`;
+      $("#productGrid").setAttribute("aria-busy", "false");
       showToast(error.message || "Could not connect to Shoeline.", true);
     }
   }

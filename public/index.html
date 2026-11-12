@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Discover expressive sneakers, considered design, and everyday movement at Shoeline.">
-  <meta name="theme-color" content="#10110e">
-  <title>Shoeline — Move in your own direction</title>
+  <meta name="theme-color" content="#0b0d13">
+  <title>Shoeline — The next step, better.</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
@@ -13,9 +13,48 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
+  <svg class="svg-defs" aria-hidden="true" focusable="false">
+    <symbol id="sneaker-artwork" viewBox="0 0 760 460">
+      <defs>
+        <linearGradient id="sneaker-upper" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#fffdf7"/>
+          <stop offset=".48" stop-color="#dfe4ec"/>
+          <stop offset="1" stop-color="#a8b1c2"/>
+        </linearGradient>
+        <linearGradient id="sneaker-overlay" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#8ca7ff"/>
+          <stop offset="1" stop-color="#5068e8"/>
+        </linearGradient>
+        <linearGradient id="sneaker-sole" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fffdf5"/>
+          <stop offset="1" stop-color="#c5cbd6"/>
+        </linearGradient>
+        <filter id="sneaker-shadow" x="-30%" y="-30%" width="160%" height="180%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="13"/>
+          <feOffset dy="18"/>
+          <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
+          <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <ellipse cx="388" cy="382" rx="270" ry="31" fill="#060911" opacity=".18"/>
+      <g filter="url(#sneaker-shadow)">
+        <path d="M87 304c22-21 50-36 79-46 23-8 39-34 56-67 17-34 47-49 81-38 34 10 69 37 108 57 42 21 93 24 141 35 58 13 102 44 131 83 21 27 25 48 10 65-13 15-39 21-81 21H170c-50 0-80-13-91-38-11-24-8-51 8-72Z" fill="url(#sneaker-upper)"/>
+        <path d="M219 194c21-29 46-45 77-41 28 4 54 22 82 43l-41 73-102-20-42-21 26-34Z" fill="#f7f8fb"/>
+        <path d="M115 298c29-20 62-34 94-39l49-2 17 42-82 61-92-4-10-25 24-33Z" fill="url(#sneaker-overlay)"/>
+        <path d="m334 196 70 35c38 18 77 25 120 31l-34 80-128-23-60-50 32-73Z" fill="url(#sneaker-overlay)"/>
+        <path d="m293 207 94 38-23 26-92-26 21-38Z" fill="#fcfcfa"/>
+        <path d="m278 228 100 39-10 14-99-37 9-16Zm-12 22 100 39-10 14-98-37 8-16Zm-10 22 96 37-10 14-94-35 8-16Z" fill="#7188ec" opacity=".9"/>
+        <path d="M84 329c42 17 89 21 142 16l170-19c73-8 154-7 253 16 24 6 40 14 48 25 6 9 2 19-9 27-16 12-45 18-86 18H168c-52 0-86-11-101-32-11-15-5-35 17-51Z" fill="url(#sneaker-sole)"/>
+        <path d="M91 367c47 17 100 21 159 15l157-16c90-9 183-3 278 18-13 18-44 28-91 28H167c-44 0-75-10-93-29-7-8-2-14 17-16Z" fill="#18202f"/>
+        <path d="M177 267c25-25 43-59 57-88m-74 100 76-7m-99 31 113-7m-46-101 82 25m59-5 72 31" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="8" opacity=".55"/>
+        <path d="M530 280c35 11 67 27 92 49" fill="none" stroke="#fff" stroke-linecap="round" stroke-width="8" opacity=".48"/>
+        <path d="M169 391h47m36 0h62m37 0h65m40 0h58m34 0h50" fill="none" stroke="#9299a8" stroke-linecap="round" stroke-width="5" opacity=".6"/>
+      </g>
+    </symbol>
+  </svg>
   <div class="ambient ambient-one" aria-hidden="true"></div>
   <div class="ambient ambient-two" aria-hidden="true"></div>
-  <div class="announcement"><span>Move more. Pay less.</span><i></i> Complimentary delivery over ₱2,500 <i></i> Easy 30-day returns</div>
+  <div class="announcement"><span>THE GOOD STUFF, DELIVERED</span><i></i> Complimentary delivery over ₱2,500 <i></i> 30-day returns, no pressure</div>
   <header class="site-header">
     <div class="header-row">
       <a class="wordmark" href="#home" aria-label="Shoeline home">shoe<span>line</span><b>.</b></a>
@@ -43,25 +82,25 @@
   </header>
 
   <main id="home">
-    <section class="hero">
+    <section class="hero" data-reveal>
       <div class="hero-copy">
-        <p class="eyebrow"><span class="eyebrow-dot"></span> A new season of motion</p>
-        <h1>Find your<br><span>own pace.</span></h1>
-        <p class="hero-description">The right pair changes the whole day. Meet thoughtfully chosen sneakers made for wherever you’re headed next.</p>
+        <p class="eyebrow"><span class="eyebrow-dot"></span> The Shoeline edit / 026</p>
+        <h1>Make<br>your <span>move.</span></h1>
+        <p class="hero-description">A better everyday starts from the ground up. Discover standout sneakers selected for comfort, character, and wherever you go next.</p>
         <div class="hero-actions">
-          <a class="button button-lime" href="#shop">Explore the collection <span>↗</span></a>
+          <a class="button button-lime" href="#shop">Explore the edit <span>↗</span></a>
           <a class="text-link" href="#story">Our point of view <span>↓</span></a>
         </div>
         <div class="hero-proof"><div class="avatar-stack"><b>J</b><b>M</b><b>A</b></div><p><strong>4.9/5</strong><span>from people on the move</span></p></div>
       </div>
-      <div class="hero-art" aria-label="A sculptural sneaker illustration">
+      <div class="hero-art" aria-hidden="true">
         <div class="art-grid" aria-hidden="true"></div>
         <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
         <div class="art-sun"></div><div class="art-spark">✳</div>
-        <div class="hero-shoe" aria-hidden="true"><span>👟</span></div>
-        <div class="art-label art-label-top">SHOELINE / 026</div>
-        <div class="art-label art-label-bottom"><span>01</span> BUILT FOR THE IN-BETWEEN</div>
-        <div class="art-side-note">STEP INTO SOMETHING GOOD</div>
+        <div class="hero-shoe"><svg class="sneaker-render" viewBox="0 0 760 460"><use href="#sneaker-artwork"></use></svg></div>
+        <div class="art-label art-label-top">FORM / FUNCTION / FEEL</div>
+        <div class="art-label art-label-bottom"><span>01</span> A BETTER WAY FORWARD</div>
+        <div class="art-side-note">DESIGNED TO KEEP YOU MOVING</div>
       </div>
       <div class="hero-index"><span>01</span><span class="index-line"></span><span>04</span></div>
     </section>
@@ -71,27 +110,30 @@
     </div>
 
     <section class="shop-section" id="shop">
-      <div class="section-heading">
+      <div class="section-heading" data-reveal>
         <div><p class="eyebrow eyebrow-dark">THE ROTATION</p><h2>Good things<br class="mobile-break"> are in motion.</h2></div>
         <p class="section-copy">A considered edit for the everyday and the out-of-the-ordinary.</p>
       </div>
       <div class="shop-toolbar">
-        <div class="filter-list" id="filters" aria-label="Filter products">
-          <button class="filter-chip active" type="button" data-filter="All">All pairs</button>
-          <button class="filter-chip" type="button" data-filter="New">New in</button>
-          <button class="filter-chip" type="button" data-filter="Men">Men</button>
-          <button class="filter-chip" type="button" data-filter="Women">Women</button>
-          <button class="filter-chip" type="button" data-filter="Kids">Kids</button>
-          <button class="filter-chip" type="button" data-filter="Sale">On offer</button>
+        <div class="filter-list" id="filters" role="tablist" aria-label="Filter products">
+          <button class="filter-chip active" id="filter-all" type="button" role="tab" aria-selected="true" aria-controls="productGrid" tabindex="0" data-filter="All">All pairs</button>
+          <button class="filter-chip" id="filter-new" type="button" role="tab" aria-selected="false" aria-controls="productGrid" tabindex="-1" data-filter="New">New in</button>
+          <button class="filter-chip" id="filter-men" type="button" role="tab" aria-selected="false" aria-controls="productGrid" tabindex="-1" data-filter="Men">Men</button>
+          <button class="filter-chip" id="filter-women" type="button" role="tab" aria-selected="false" aria-controls="productGrid" tabindex="-1" data-filter="Women">Women</button>
+          <button class="filter-chip" id="filter-kids" type="button" role="tab" aria-selected="false" aria-controls="productGrid" tabindex="-1" data-filter="Kids">Kids</button>
+          <button class="filter-chip" id="filter-sale" type="button" role="tab" aria-selected="false" aria-controls="productGrid" tabindex="-1" data-filter="Sale">On offer</button>
         </div>
         <span class="results-count" id="resultsCount">Loading collection…</span>
       </div>
-      <div class="product-grid" id="productGrid" aria-live="polite">
-        <div class="loading-card"><span class="loader"></span><p>Finding your next favorite…</p></div>
+      <div class="product-grid" id="productGrid" role="tabpanel" aria-labelledby="filter-all" aria-live="polite" aria-busy="true">
+        <article class="skeleton-card" aria-hidden="true"><div class="skeleton-visual"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div></article>
+        <article class="skeleton-card" aria-hidden="true"><div class="skeleton-visual"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div></article>
+        <article class="skeleton-card" aria-hidden="true"><div class="skeleton-visual"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div></article>
+        <article class="skeleton-card" aria-hidden="true"><div class="skeleton-visual"></div><div class="skeleton-line"></div><div class="skeleton-line short"></div></article>
       </div>
     </section>
 
-    <section class="manifesto" id="story">
+    <section class="manifesto" id="story" data-reveal>
       <div class="manifesto-orbit" aria-hidden="true">S</div>
       <p class="eyebrow"><span class="eyebrow-dot"></span> A little less ordinary</p>
       <h2>Good shoes don’t<br>just take you places.<br><em>They change the feeling.</em></h2>
@@ -99,18 +141,18 @@
       <a class="text-link" href="#shop">Find your next pair <span>↗</span></a>
     </section>
 
-    <section class="service-grid" aria-label="Shoeline benefits">
+    <section class="service-grid" aria-label="Shoeline benefits" data-reveal>
       <article class="service-card"><span class="service-icon">↗</span><p class="eyebrow">01 / EASY DOES IT</p><h3>Delivery, on us.</h3><p>Complimentary delivery when your order reaches ₱2,500.</p></article>
       <article class="service-card"><span class="service-icon">↺</span><p class="eyebrow">02 / NO PRESSURE</p><h3>30 days to decide.</h3><p>Try them on. Take a walk. Send them back if they’re not it.</p></article>
       <article class="service-card"><span class="service-icon">✳</span><p class="eyebrow">03 / BUILT TO LAST</p><h3>Good things, often.</h3><p>Thoughtful picks from the brands that know their craft.</p></article>
     </section>
 
-    <section class="club-banner" id="club">
+    <section class="club-banner" id="club" data-reveal>
       <div class="club-copy"><p class="eyebrow">THE SHOELINE CLUB</p><h2>Better things<br>come full circle.</h2><p>Keep your favorites close, your order history handy, and your next good thing in sight.</p><button class="button button-dark" type="button" data-action="account">Come on in <span>↗</span></button></div>
       <div class="club-art" aria-hidden="true"><div class="club-ring ring-a"></div><div class="club-ring ring-b"></div><div class="club-orb"></div><span>✳</span></div>
     </section>
 
-    <section class="business-section" id="business">
+    <section class="business-section" id="business" data-reveal>
       <div><p class="eyebrow eyebrow-dark">SHOELINE, TOGETHER</p><h2>Good things<br>move in groups.</h2><p>Outfitting a team, class or community? Tell us what you have in mind and we’ll help find the right fit.</p></div>
       <button class="button button-outline" type="button" data-action="quote">Talk to our team <span>↗</span></button>
     </section>
