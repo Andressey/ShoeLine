@@ -48,7 +48,7 @@ Save the variables and redeploy the latest `main` commit. The repo’s [`vercel.
 ## Features
 
 - Searchable, filterable catalog with animated ambient art, realistic rotating sneaker photography, 3D-style product motion and responsive layouts
-- The rotating running-shoe photo is by Saiburi, cropped from its black studio background, and licensed under CC BY-SA 3.0
+- The rotating running-shoe photo by Saiburi is cropped with its studio background removed, and licensed under CC BY-SA 3.0
 - Shoeline brand mark in the storefront, owner dashboard and favicon; background music attempts autoplay with a play-button fallback for browser restrictions
 - Floating scan-to-visit QR code linking to the live storefront
 - Store locator section with searchable Google Maps preview and directions link
