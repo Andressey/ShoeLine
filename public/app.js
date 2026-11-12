@@ -1061,11 +1061,6 @@
       const filterButton = event.target.closest("[data-filter]");
       if (filterButton) setFilter(filterButton.dataset.filter);
 
-      if (event.target.closest("#menuButton")) {
-        const nav = $("#siteNav");
-        const expanded = nav.classList.toggle("open");
-        $("#menuButton").setAttribute("aria-expanded", String(expanded));
-      }
     });
 
     document.addEventListener("submit", async event => {
