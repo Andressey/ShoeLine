@@ -26,6 +26,7 @@
     realtimeReconnectAttempts: 0,
     realtimeRef: 0,
     productPreviewUrl: null,
+    navigationPreviewTimer: null,
     toastTimer: null
   };
 
@@ -44,6 +45,43 @@
     toast.classList.add("show");
     clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(() => toast.classList.remove("show"), 2800);
+  }
+
+  function showNavigationPreview(message) {
+    const preview = $("#navigationPreview");
+    $("#navigationPreviewText").textContent = message;
+    preview.setAttribute("aria-hidden", "false");
+    preview.classList.add("visible");
+    clearTimeout(state.navigationPreviewTimer);
+    state.navigationPreviewTimer = setTimeout(hideNavigationPreview, 520);
+  }
+
+  function hideNavigationPreview() {
+    const preview = $("#navigationPreview");
+    preview.classList.remove("visible");
+    preview.setAttribute("aria-hidden", "true");
+  }
+
+  function loadingMarkup(message) {
+    return `<div class="loading-card" role="status"><span class="loader" aria-hidden="true"></span><span>${escapeHtml(message)}</span></div>`;
+  }
+
+  async function toggleBackgroundMusic() {
+    const audio = $("#backgroundMusic");
+    const button = $("#musicToggle");
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch {
+        showToast("Background music could not be played. Please try again.", true);
+      }
+      return;
+    }
+    audio.pause();
+    button.setAttribute("aria-pressed", "false");
+    button.setAttribute("aria-label", "Play background music");
+    $(".music-label", button).textContent = "Play music";
+    button.classList.remove("playing");
   }
 
   function setSession(session) {
@@ -522,12 +560,17 @@
     if (isAdmin()) tabs.push(["owner", "Owner dashboard"]);
     const tabMarkup = `<div class="modal-tabs">${tabs.map(([value, label]) => `<button type="button" data-action="customer" data-tab="${value}" class="${tab === value ? "active" : ""}">${label}</button>`).join("")}</div>`;
     openModal(`Hello, ${name.split(" ")[0]}.`, `${tabMarkup}<div id="customerPanel"><p>Loading your account…</p></div>`, { eyebrow: "YOUR SHOELINE / ACCOUNT" });
-    renderCustomerTab(tab, email).catch(error => showToast(error.message, true));
+    renderCustomerTab(tab, email).catch(error => {
+      const panel = $("#customerPanel");
+      if (panel) panel.innerHTML = `<div class="empty-state"><p>${escapeHtml(error.message || "Could not load your account.")}</p></div>`;
+      showToast(error.message || "Could not load your account.", true);
+    });
   }
 
   async function renderCustomerTab(tab, email) {
     const panel = $("#customerPanel");
     if (!panel) return;
+    panel.innerHTML = loadingMarkup(`Loading your ${tab}…`);
     if (tab === "overview") {
       const orders = await loadOrders();
       panel.innerHTML = `<p><strong>${escapeHtml(state.profile.full_name)}</strong><br><span class="notice">${email}</span></p><p class="notice">Your orders, saved pairs and delivery details are yours alone. Sign out from this device when you’re done.</p>${isAdmin() ? `<div class="owner-profile-card"><div><strong>Store owner</strong><small>Manage orders, products, stock and reviews.</small></div><button class="button button-dark" type="button" data-action="customer" data-tab="owner">Open dashboard <span>↗</span></button></div>` : ""}<div class="line-item"><div><strong>Recent orders</strong><small>${orders.length ? `${orders.length} order${orders.length === 1 ? "" : "s"} on your account` : "Your next favorite is just around the corner."}</small></div><button class="switch-button" type="button" data-action="customer" data-tab="orders">View orders →</button></div><div class="line-item"><div><strong>Your wishlist</strong><small>${state.wishlist.size} saved pair${state.wishlist.size === 1 ? "" : "s"}</small></div><button class="switch-button" type="button" data-action="wishlist">Open →</button></div><button class="button button-outline form-submit" type="button" data-action="signout">Sign out</button>`;
@@ -594,7 +637,7 @@
     }
     stopAdminLiveUpdates();
     state.adminTab = tab;
-    openModal("The store, at a glance.", `<div class="admin-shell"><aside class="admin-sidebar"><p class="admin-brand">SHOELINE / OWNER</p><nav class="admin-nav" aria-label="Owner dashboard">${[
+    openModal("The store, at a glance.", `<div class="admin-shell"><aside class="admin-sidebar"><p class="admin-brand"><img src="/images/shoeline-logo.png" alt=""> SHOELINE / OWNER</p><nav class="admin-nav" aria-label="Owner dashboard">${[
       ["overview", "Overview"], ["orders", "Orders"], ["products", "Products & stock"], ["customers", "Customers"], ["reviews", "Reviews"], ["returns", "Returns"], ["quotes", "Team quotes"], ["access", "Team access"]
     ].map(([value, label]) => `<button type="button" data-action="admin-tab" data-tab="${value}" class="${state.adminTab === value ? "active" : ""}">${label}</button>`).join("")}</nav></aside><main class="admin-main"><div class="admin-live-status" id="adminLiveStatus" role="status">Connecting to live order updates…</div><div id="adminContent"><p>Loading your store…</p></div></main></div>`, { eyebrow: "PRIVATE / OWNER DASHBOARD", wide: true });
     try {
@@ -1011,6 +1054,33 @@
   }
 
   function registerHandlers() {
+    document.addEventListener("click", event => {
+      const target = event.target.closest(".site-nav a, #filters [role='tab'], .modal-tabs [data-action='customer'], .admin-nav [data-action='admin-tab']");
+      if (!target || target.matches("[aria-selected='true'], .active")) return;
+      const label = target.textContent.trim().replace(/\s+/g, " ");
+      showNavigationPreview(`Loading ${label}…`);
+    }, true);
+
+    $("#backgroundMusic").addEventListener("play", () => {
+      const button = $("#musicToggle");
+      button.setAttribute("aria-pressed", "true");
+      button.setAttribute("aria-label", "Pause background music");
+      $(".music-label", button).textContent = "Pause music";
+      button.classList.add("playing");
+    });
+
+    $("#backgroundMusic").addEventListener("pause", () => {
+      const button = $("#musicToggle");
+      button.setAttribute("aria-pressed", "false");
+      button.setAttribute("aria-label", "Play background music");
+      $(".music-label", button).textContent = "Play music";
+      button.classList.remove("playing");
+    });
+
+    $("#backgroundMusic").addEventListener("error", () => {
+      showToast("The background music file could not be loaded.", true);
+    });
+
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && state.adminLiveActive) {
         refreshAdminOrders().catch(() => {});
@@ -1040,6 +1110,7 @@
           }
           else if (action === "cart-qty") changeCart(id, Number(delta));
           else if (action === "wishlist") openWishlist();
+          else if (action === "music-toggle") await toggleBackgroundMusic();
           else if (action === "toggle-wish") await toggleWishlist(id);
           else if (action === "product-reviews") await openProductReviews(id);
           else if (action === "quote") openQuote();
@@ -1071,6 +1142,12 @@
         if (form.id === "searchForm") {
           renderProducts();
           $("#shop").scrollIntoView({ behavior: "smooth" });
+        } else if (form.id === "storeSearchForm") {
+          const query = $("#storeSearchInput").value.trim();
+          const encodedQuery = encodeURIComponent(query);
+          $("#storeMap").src = `https://www.google.com/maps?q=${encodedQuery}&output=embed`;
+          $("#storeDirections").href = `https://www.google.com/maps/search/?api=1&query=${encodedQuery}`;
+          showNavigationPreview("Finding that place on the map…");
         } else if (form.id === "authForm") {
           const data = new FormData(form);
           if (form.dataset.mode === "register") {
