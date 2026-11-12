@@ -13,9 +13,12 @@ A polished, responsive sneaker storefront backed by Supabase Auth and Postgres, 
 
 1. Open the Supabase project and go to **SQL Editor**.
 2. Run [`supabase/migrations/20261112000000_shoeline_commerce.sql`](./supabase/migrations/20261112000000_shoeline_commerce.sql).
-3. In **Project Settings → API Keys**, copy the project URL and the public `anon`/publishable key. Never use a `service_role` or secret key in this app.
-4. In **Authentication → URL Configuration**, set the Site URL to the deployed Vercel URL. Add any preview or local URLs to the redirect allow list if you enable email confirmation or OAuth.
-5. After the store owner creates and confirms their customer account, grant owner access in the Supabase SQL Editor:
+3. Run [`supabase/migrations/20261112183000_shoeline_storefront_operations.sql`](./supabase/migrations/20261112183000_shoeline_storefront_operations.sql) after the commerce migration. It configures product-image storage, verified-purchase reviews, owner order operations, and order realtime updates.
+4. In **Project Settings → API Keys**, copy the project URL and the public `anon`/publishable key. Never use a `service_role` or secret key in this app.
+5. In **Authentication → URL Configuration**, set the Site URL to the deployed Vercel URL. Add any preview or local URLs to the redirect allow list if you enable email confirmation or OAuth.
+6. To sign customers in immediately after password signup, open **Authentication → Sign In / Providers → Email** and turn off **Confirm email**. This changes only email verification; password authentication remains enabled. If confirmation stays on, new customers must confirm their email before signing in.
+
+The operations migration promotes `georgeandreiguiang@gmail.com` to owner only if that account already exists and has a confirmed email when the migration runs. For another verified account, an existing owner can use **Profile → Owner dashboard → Team access** to grant access. Alternatively, grant the first owner from the Supabase SQL Editor:
 
    ```sql
    update public.profiles
@@ -27,7 +30,7 @@ A polished, responsive sneaker storefront backed by Supabase Auth and Postgres, 
    );
    ```
 
-   Replace `OWNER_EMAIL` with the exact owner account email. New signups are customers by default; the owner dashboard is only shown to profiles with the `admin` role.
+   Replace `OWNER_EMAIL` with the exact, already-verified account email. New signups are customers by default; the owner dashboard is only shown to profiles with the `admin` role.
 
 The migration creates profiles, products and images, addresses, carts and cart items, wishlists, orders and immutable order items, payments, inventory movements, returns, product reviews, promotions, business accounts and members, quote requests and quote items, requisition lists and items, and admin activity logs. It seeds the eight starter products and can be re-run safely.
 
@@ -47,8 +50,11 @@ Save the variables and redeploy the latest `main` commit. The repo’s [`vercel.
 - Searchable, filterable catalog with animated ambient art, 3D-style product motion and responsive layouts
 - Supabase Auth sign-up/sign-in, customer profile, wishlist, order history, saved delivery addresses and returns
 - Transactional order creation that re-checks live prices and stock, reserves inventory and creates pending orders
-- Role-protected owner dashboard for products, inventory, order status, customers, returns and team quotes
-- Business quote submissions, promotion/review schema, customer carts and requisition lists
+- Profile-accessible, role-protected owner dashboard for products, inventory, order status, customers, returns, reviews and team access
+- Product photo uploads to an admin-only Supabase Storage bucket; public catalog images are served through the bucket’s public URLs
+- Verified-purchase reviews with owner moderation, live order subscriptions with automatic refresh fallback, and order status controls
+- Cancellation restores reserved stock; only delivered or cancelled orders can be deleted from the owner dashboard
+- Business quote submissions, promotions, customer carts and requisition lists
 - Accessible modal interactions and reduced-motion support
 
 The checkout currently supports **cash on delivery**. It does not collect card details or claim to process online payments. Add a payment provider later through a server-side integration and verified webhooks.

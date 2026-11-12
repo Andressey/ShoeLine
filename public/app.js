@@ -9,6 +9,7 @@
     session: safeJson(localStorage.getItem("shoeline_session"), null),
     profile: null,
     products: [],
+    reviews: [],
     orders: [],
     filter: "All",
     cart: safeJson(localStorage.getItem("shoeline_cart"), []),
@@ -16,6 +17,15 @@
     wishlist: new Set(),
     adminTab: "overview",
     adminData: null,
+    adminRefreshTimer: null,
+    adminRefreshInFlight: false,
+    adminLiveActive: false,
+    realtimeSocket: null,
+    realtimeHeartbeat: null,
+    realtimeReconnectTimer: null,
+    realtimeReconnectAttempts: 0,
+    realtimeRef: 0,
+    productPreviewUrl: null,
     toastTimer: null
   };
 
@@ -55,7 +65,12 @@
   }
 
   async function loadProducts() {
-    state.products = await dbRequest("products?select=id,sku,slug,name,brand,category,audience,description,price,compare_at,inventory,image_url,icon,color,badge,is_new,is_featured&is_active=eq.true&order=is_featured.desc,created_at.desc");
+    const [products, reviews] = await Promise.all([
+      dbRequest("products?select=id,sku,slug,name,brand,category,audience,description,price,compare_at,inventory,image_url,icon,color,badge,is_new,is_featured&is_active=eq.true&order=is_featured.desc,created_at.desc"),
+      dbRequest("product_reviews?select=product_id,rating&is_approved=eq.true&order=created_at.desc&limit=500")
+    ]);
+    state.products = products;
+    state.reviews = reviews;
     renderProducts();
   }
 
@@ -79,6 +94,7 @@
     try {
       const session = await authRequest("token?grant_type=refresh_token", { refresh_token: state.session.refresh_token });
       setSession(session);
+      syncRealtimeAccessToken();
       return true;
     } catch {
       setSession(null);
@@ -126,7 +142,7 @@
 
   function renderHeader() {
     const accountButton = $("#accountButton");
-    accountButton.querySelector(".account-label").textContent = isAdmin() ? "Owner" : state.profile ? "My account" : "Account";
+    accountButton.querySelector(".account-label").textContent = isAdmin() ? "Profile" : state.profile ? "My account" : "Account";
     accountButton.classList.toggle("owner-link", isAdmin());
     const wishlistSize = isAdmin() || currentUserId() ? state.wishlist.size : state.guestWishlist.length;
     $("#wishCount").textContent = String(wishlistSize);
@@ -145,6 +161,23 @@
     });
   }
 
+  function productImageUrl(product) {
+    if (!product.image_url) return null;
+    try {
+      const url = new URL(product.image_url, location.origin);
+      return url.protocol === "https:" || url.origin === location.origin ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function productRating(productId) {
+    const ratings = state.reviews.filter(review => review.product_id === productId);
+    if (!ratings.length) return null;
+    const average = ratings.reduce((sum, review) => sum + Number(review.rating), 0) / ratings.length;
+    return { average, count: ratings.length, stars: "★".repeat(Math.round(average)) + "☆".repeat(5 - Math.round(average)) };
+  }
+
   function renderProducts() {
     const products = visibleProducts();
     const grid = $("#productGrid");
@@ -155,12 +188,17 @@
         <div class="product-visual" style="--product-color:${escapeHtml(product.color)}">
           <span class="product-brand">${escapeHtml(product.brand)}</span>
           ${product.badge ? `<span class="product-badge">${escapeHtml(product.badge)}</span>` : ""}
-          <svg class="product-shoe" viewBox="0 0 760 460" aria-hidden="true" focusable="false"><use href="#sneaker-artwork"></use></svg>
+          ${productImageUrl(product)
+            ? `<img class="product-photo" src="${escapeHtml(productImageUrl(product))}" alt="${escapeHtml(product.name)} sneakers" loading="lazy">`
+            : `<svg class="product-shoe" viewBox="0 0 760 460" aria-hidden="true" focusable="false"><use href="#sneaker-artwork"></use></svg>`}
           <button class="wish-toggle ${state.wishlist.has(product.id) ? "saved" : ""}" type="button" data-action="toggle-wish" data-id="${escapeHtml(product.id)}" aria-label="${state.wishlist.has(product.id) ? "Remove from" : "Add to"} wishlist">${state.wishlist.has(product.id) ? "♥" : "♡"}</button>
         </div>
         <div class="product-details">
           <p class="product-category">${escapeHtml(product.category)} · ${escapeHtml(product.audience)}</p>
           <h3>${escapeHtml(product.name)}</h3>
+          ${productRating(product.id)
+            ? `<div class="product-rating"><span class="product-stars" aria-label="Rated ${productRating(product.id).average.toFixed(1)} out of 5">${productRating(product.id).stars}</span><button type="button" data-action="product-reviews" data-id="${escapeHtml(product.id)}">${productRating(product.id).average.toFixed(1)} · ${productRating(product.id).count} review${productRating(product.id).count === 1 ? "" : "s"}</button></div>`
+            : `<div class="product-rating"><span class="product-stars" aria-hidden="true">☆☆☆☆☆</span><button type="button" data-action="product-reviews" data-id="${escapeHtml(product.id)}">Be the first to review</button></div>`}
           <div class="product-price-row"><div class="price-group"><span class="product-price">${money(product.price)}</span>${product.compare_at > product.price ? `<span class="product-old-price">${money(product.compare_at)}</span>` : ""}</div>
             <button class="add-button" type="button" data-action="add-cart" data-id="${escapeHtml(product.id)}" aria-label="Add ${escapeHtml(product.name)} to bag">+</button>
           </div>
@@ -215,6 +253,11 @@
   }
 
   function closeModal() {
+    stopAdminLiveUpdates();
+    if (state.productPreviewUrl) {
+      URL.revokeObjectURL(state.productPreviewUrl);
+      state.productPreviewUrl = null;
+    }
     $("#modal").classList.remove("open");
     $("#modal").setAttribute("aria-hidden", "true");
     document.body.classList.remove("modal-open");
@@ -230,7 +273,7 @@
         <div class="field"><label for="authEmail">Email address</label><input id="authEmail" name="email" type="email" autocomplete="email" required></div>
         <div class="field"><label for="authPassword">Password</label><input id="authPassword" name="password" type="password" autocomplete="${registering ? "new-password" : "current-password"}" minlength="${registering ? "10" : "1"}" required></div>
         <button class="button button-dark form-submit" type="submit">${registering ? "Create your account" : "Sign in"} <span>↗</span></button>
-        <p class="notice">${registering ? "Use at least 10 characters. We’ll send you an email to confirm your account." : "Your account details are protected by Supabase authentication."}</p>
+        <p class="notice">${registering ? "Use at least 10 characters. If email confirmation is off for the store, you’ll be signed in immediately; otherwise, confirm your email first." : "Your account details are protected by Supabase authentication."}</p>
       </form>`, { eyebrow: "YOUR SHOELINE / ACCOUNT" });
   }
 
@@ -412,13 +455,72 @@
     return dbRequest(`orders?select=id,order_number,status,payment_status,payment_method,total,currency,created_at,order_items(product_name,quantity,unit_price)&user_id=eq.${encodeURIComponent(currentUserId())}&order=created_at.desc`);
   }
 
+  async function openProductReviews(productId) {
+    const product = productById(productId);
+    if (!product) return;
+    openModal(`${product.name} reviews`, `<div class="review-loading"><span class="loader"></span><p>Loading customer reviews…</p></div>`, { eyebrow: "SHOELINE / CUSTOMER NOTES" });
+    try {
+      const reviews = await dbRequest(`product_reviews?select=id,rating,title,body,created_at&product_id=eq.${encodeURIComponent(productId)}&is_approved=eq.true&order=created_at.desc&limit=100`);
+      let reviewForm = `<p class="notice">Sign in to review this pair after it has been delivered.</p><button class="button button-outline form-submit" type="button" data-action="account">Sign in to write a review <span>↗</span></button>`;
+      if (currentUserId()) {
+        const [eligibleOrders, existingReviews] = await Promise.all([
+          dbRequest(`orders?select=id,order_number,order_items!inner(product_id)&user_id=eq.${encodeURIComponent(currentUserId())}&status=eq.delivered&order_items.product_id=eq.${encodeURIComponent(productId)}`),
+          dbRequest(`product_reviews?select=id&product_id=eq.${encodeURIComponent(productId)}&user_id=eq.${encodeURIComponent(currentUserId())}&limit=1`)
+        ]);
+        if (existingReviews.length) {
+          reviewForm = `<p class="notice">You’ve already reviewed this pair. Thanks for sharing your experience.</p>`;
+        } else if (eligibleOrders.length) {
+          reviewForm = `<form id="reviewForm" data-product-id="${escapeHtml(productId)}">
+            <div class="field"><label for="reviewOrder">Delivered order</label><select id="reviewOrder" name="order_id" required>${eligibleOrders.map(order => `<option value="${escapeHtml(order.id)}">${escapeHtml(order.order_number)}</option>`).join("")}</select></div>
+            <div class="field"><label for="reviewRating">Your rating</label><select id="reviewRating" name="rating" required><option value="5">★★★★★ · Loved it</option><option value="4">★★★★☆ · Really good</option><option value="3">★★★☆☆ · It’s good</option><option value="2">★★☆☆☆ · Not for me</option><option value="1">★☆☆☆☆ · Disappointed</option></select></div>
+            <div class="field"><label for="reviewTitle">Headline (optional)</label><input id="reviewTitle" name="title" maxlength="100"></div>
+            <div class="field"><label for="reviewBody">Your review</label><textarea id="reviewBody" name="body" maxlength="1500" required minlength="10"></textarea></div>
+            <button class="button button-dark form-submit" type="submit">Submit review <span>↗</span></button>
+            <p class="notice">Reviews are checked before they appear publicly.</p>
+          </form>`;
+        } else {
+          reviewForm = `<p class="notice">Reviews are available after your order for this pair has been delivered.</p>`;
+        }
+      }
+      const reviewList = reviews.length ? reviews.map(review => `<article class="review-item"><div class="review-item-heading"><span class="product-stars" aria-label="${review.rating} out of 5">${"★".repeat(review.rating)}${"☆".repeat(5 - review.rating)}</span><time>${new Date(review.created_at).toLocaleDateString("en-PH")}</time></div>${review.title ? `<h3>${escapeHtml(review.title)}</h3>` : ""}<p>${escapeHtml(review.body)}</p><small>Verified Shoeline customer</small></article>`).join("") : `<div class="admin-empty">No approved reviews yet. Your experience can be the first.</div>`;
+      $("#modalBody").innerHTML = `<div class="review-list">${reviewList}</div><div class="review-compose"><h3>Share your experience</h3>${reviewForm}</div>`;
+    } catch (error) {
+      $("#modalBody").innerHTML = `<div class="admin-empty">${escapeHtml(error.message || "Reviews are temporarily unavailable.")}</div>`;
+      showToast(error.message || "Could not load reviews.", true);
+    }
+  }
+
+  async function submitReview(form) {
+    const values = Object.fromEntries(new FormData(form).entries());
+    const productId = form.dataset.productId;
+    const rating = Number(values.rating);
+    if (!currentUserId() || !productById(productId)) throw new Error("Sign in to review this product.");
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new Error("Choose a rating from 1 to 5.");
+    await dbRequest("product_reviews", {
+      method: "POST",
+      body: {
+        product_id: productId,
+        user_id: currentUserId(),
+        order_id: values.order_id,
+        rating,
+        title: String(values.title || "").trim(),
+        body: String(values.body || "").trim(),
+        is_approved: false
+      },
+      prefer: "return=minimal"
+    });
+    await loadProducts();
+    openModal("Thanks for sharing.", "<p>Your review has been sent to the store owner for approval.</p>", { eyebrow: "REVIEW SUBMITTED" });
+  }
+
   function openCustomer(tab = "overview") {
     if (!state.profile) return authForm();
+    if (tab === "owner" && isAdmin()) return openAdmin();
     const name = escapeHtml(state.profile.full_name || "Shoeline member");
     const email = escapeHtml(state.session?.user?.email || "");
-    const tabMarkup = `<div class="modal-tabs">${[
-      ["overview", "Overview"], ["orders", "Orders"], ["returns", "Returns"], ["addresses", "Addresses"]
-    ].map(([value, label]) => `<button type="button" data-action="customer" data-tab="${value}" class="${tab === value ? "active" : ""}">${label}</button>`).join("")}</div>`;
+    const tabs = [["overview", "Overview"], ["orders", "Orders"], ["returns", "Returns"], ["addresses", "Addresses"]];
+    if (isAdmin()) tabs.push(["owner", "Owner dashboard"]);
+    const tabMarkup = `<div class="modal-tabs">${tabs.map(([value, label]) => `<button type="button" data-action="customer" data-tab="${value}" class="${tab === value ? "active" : ""}">${label}</button>`).join("")}</div>`;
     openModal(`Hello, ${name.split(" ")[0]}.`, `${tabMarkup}<div id="customerPanel"><p>Loading your account…</p></div>`, { eyebrow: "YOUR SHOELINE / ACCOUNT" });
     renderCustomerTab(tab, email).catch(error => showToast(error.message, true));
   }
@@ -428,7 +530,7 @@
     if (!panel) return;
     if (tab === "overview") {
       const orders = await loadOrders();
-      panel.innerHTML = `<p><strong>${escapeHtml(state.profile.full_name)}</strong><br><span class="notice">${email}</span></p><p class="notice">Your orders, saved pairs and delivery details are yours alone. Sign out from this device when you’re done.</p><div class="line-item"><div><strong>Recent orders</strong><small>${orders.length ? `${orders.length} order${orders.length === 1 ? "" : "s"} on your account` : "Your next favorite is just around the corner."}</small></div><button class="switch-button" type="button" data-action="customer" data-tab="orders">View orders →</button></div><div class="line-item"><div><strong>Your wishlist</strong><small>${state.wishlist.size} saved pair${state.wishlist.size === 1 ? "" : "s"}</small></div><button class="switch-button" type="button" data-action="wishlist">Open →</button></div><button class="button button-outline form-submit" type="button" data-action="signout">Sign out</button>`;
+      panel.innerHTML = `<p><strong>${escapeHtml(state.profile.full_name)}</strong><br><span class="notice">${email}</span></p><p class="notice">Your orders, saved pairs and delivery details are yours alone. Sign out from this device when you’re done.</p>${isAdmin() ? `<div class="owner-profile-card"><div><strong>Store owner</strong><small>Manage orders, products, stock and reviews.</small></div><button class="button button-dark" type="button" data-action="customer" data-tab="owner">Open dashboard <span>↗</span></button></div>` : ""}<div class="line-item"><div><strong>Recent orders</strong><small>${orders.length ? `${orders.length} order${orders.length === 1 ? "" : "s"} on your account` : "Your next favorite is just around the corner."}</small></div><button class="switch-button" type="button" data-action="customer" data-tab="orders">View orders →</button></div><div class="line-item"><div><strong>Your wishlist</strong><small>${state.wishlist.size} saved pair${state.wishlist.size === 1 ? "" : "s"}</small></div><button class="switch-button" type="button" data-action="wishlist">Open →</button></div><button class="button button-outline form-submit" type="button" data-action="signout">Sign out</button>`;
     } else if (tab === "orders") {
       const orders = await loadOrders();
       panel.innerHTML = orders.length ? orders.map(order => `<div class="order-card"><div><strong>${escapeHtml(order.order_number)}</strong><small>${new Date(order.created_at).toLocaleDateString("en-PH")} · ${escapeHtml((order.order_items || []).map(item => `${item.product_name} × ${item.quantity}`).join(", "))}</small><small><span class="status-pill">${escapeHtml(order.status)}</span> · ${escapeHtml(order.payment_status)}</small></div><strong>${money(order.total)}</strong></div>`).join("") : `<div class="cart-empty"><span>↗</span><strong>Your story starts with a first step.</strong><p>Orders you place will appear here.</p></div>`;
@@ -490,27 +592,30 @@
       showToast("Owner access is available to authorized store admins only.", true);
       return;
     }
+    stopAdminLiveUpdates();
     state.adminTab = tab;
     openModal("The store, at a glance.", `<div class="admin-shell"><aside class="admin-sidebar"><p class="admin-brand">SHOELINE / OWNER</p><nav class="admin-nav" aria-label="Owner dashboard">${[
-      ["overview", "Overview"], ["orders", "Orders"], ["products", "Products"], ["customers", "Customers"], ["returns", "Returns"], ["quotes", "Team quotes"]
-    ].map(([value, label]) => `<button type="button" data-action="admin-tab" data-tab="${value}" class="${state.adminTab === value ? "active" : ""}">${label}</button>`).join("")}</nav></aside><div class="admin-main" id="adminContent"><p>Loading your store…</p></div></div>`, { eyebrow: "PRIVATE / OWNER DASHBOARD", wide: true });
+      ["overview", "Overview"], ["orders", "Orders"], ["products", "Products & stock"], ["customers", "Customers"], ["reviews", "Reviews"], ["returns", "Returns"], ["quotes", "Team quotes"], ["access", "Team access"]
+    ].map(([value, label]) => `<button type="button" data-action="admin-tab" data-tab="${value}" class="${state.adminTab === value ? "active" : ""}">${label}</button>`).join("")}</nav></aside><main class="admin-main"><div class="admin-live-status" id="adminLiveStatus" role="status">Connecting to live order updates…</div><div id="adminContent"><p>Loading your store…</p></div></main></div>`, { eyebrow: "PRIVATE / OWNER DASHBOARD", wide: true });
     try {
       await loadAdminData();
       renderAdmin();
+      startAdminLiveUpdates();
     } catch (error) {
       $("#adminContent").innerHTML = `<div class="admin-empty">${escapeHtml(error.message || "Could not load the dashboard.")}</div>`;
     }
   }
 
   async function loadAdminData() {
-    const [products, orders, customers, returns, quotes] = await Promise.all([
-      dbRequest("products?select=id,name,sku,inventory,price,compare_at,is_active,category,brand&order=created_at.desc"),
-      dbRequest("orders?select=id,order_number,status,payment_status,total,created_at,profiles(full_name),order_items(product_name,quantity)&order=created_at.desc&limit=100"),
+    const [products, orders, customers, returns, quotes, reviews] = await Promise.all([
+      dbRequest("products?select=id,name,sku,inventory,price,compare_at,is_active,category,brand,image_url&order=created_at.desc"),
+      dbRequest("orders?select=id,order_number,status,payment_status,payment_method,total,created_at,shipping_address,customer_note,profiles(full_name),order_items(product_name,quantity,unit_price)&order=created_at.desc&limit=100"),
       dbRequest("profiles?select=id,full_name,role,created_at&order=created_at.desc&limit=100"),
       dbRequest("return_requests?select=id,reason,details,status,created_at,orders(order_number,profiles(full_name))&order=created_at.desc&limit=100"),
-      dbRequest("quote_requests?select=id,organization,email,quantity,status,created_at&order=created_at.desc&limit=100")
+      dbRequest("quote_requests?select=id,organization,email,quantity,status,created_at&order=created_at.desc&limit=100"),
+      dbRequest("product_reviews?select=id,product_id,rating,title,body,is_approved,created_at,profiles(full_name),products(name)&order=created_at.desc&limit=200")
     ]);
-    state.adminData = { products, orders, customers, returns, quotes };
+    state.adminData = { products, orders, customers, returns, quotes, reviews };
   }
 
   function adminTabs() {
@@ -522,18 +627,22 @@
     if (!target || !state.adminData) return;
     const data = state.adminData;
     const pending = data.orders.filter(order => order.status === "pending");
-    const metrics = `<div class="admin-metrics"><div class="metric-card"><span>Open orders</span><strong>${pending.length}</strong></div><div class="metric-card"><span>Active pairs</span><strong>${data.products.filter(product => product.is_active).length}</strong></div><div class="metric-card"><span>Customers</span><strong>${data.customers.length}</strong></div><div class="metric-card"><span>Team quotes</span><strong>${data.quotes.filter(quote => quote.status === "new").length}</strong></div></div>`;
+    const metrics = `<div class="admin-metrics"><div class="metric-card"><span>Pending orders</span><strong>${pending.length}</strong></div><div class="metric-card"><span>Active pairs</span><strong>${data.products.filter(product => product.is_active).length}</strong></div><div class="metric-card"><span>Customers</span><strong>${data.customers.length}</strong></div><div class="metric-card"><span>Review queue</span><strong>${data.reviews.filter(review => !review.is_approved).length}</strong></div><div class="metric-card"><span>Team quotes</span><strong>${data.quotes.filter(quote => quote.status === "new").length}</strong></div></div>`;
     let body = "";
     if (state.adminTab === "overview") {
       body = `<div class="admin-topline"><div><h3>Good morning.</h3><p>Here’s what’s happening at Shoeline today.</p></div><span class="status-pill">Live store</span></div>${metrics}<h4>Orders to look at</h4>${renderOrderTable(pending.slice(0, 6))}`;
     } else if (state.adminTab === "orders") {
       body = `<div class="admin-topline"><div><h3>Orders</h3><p>Review and update fulfillment as it moves.</p></div></div>${renderOrderTable(data.orders)}`;
     } else if (state.adminTab === "products") {
-      body = `<div class="admin-topline"><div><h3>Products</h3><p>Catalog, pricing and available stock.</p></div><button class="button button-dark" type="button" data-action="new-product">Add a pair <span>+</span></button></div><div class="table-wrap"><table class="admin-table"><thead><tr><th>Pair</th><th>Price (₱)</th><th>Stock</th><th>Visibility</th><th></th></tr></thead><tbody>${data.products.map(product => `<tr data-product-row="${escapeHtml(product.id)}"><td><strong>${escapeHtml(product.name)}</strong><br><small>${escapeHtml(product.sku)}</small></td><td><input data-product-price value="${(product.price / 100).toFixed(0)}" type="number" min="1" aria-label="Price for ${escapeHtml(product.name)}"></td><td><input data-product-stock value="${product.inventory}" type="number" min="0" aria-label="Stock for ${escapeHtml(product.name)}"></td><td><select data-product-active aria-label="Visibility for ${escapeHtml(product.name)}"><option value="true" ${product.is_active ? "selected" : ""}>Live</option><option value="false" ${!product.is_active ? "selected" : ""}>Hidden</option></select></td><td><button class="switch-button" type="button" data-action="save-product" data-id="${escapeHtml(product.id)}">Save</button></td></tr>`).join("")}</tbody></table></div>`;
+      body = `<div class="admin-topline"><div><h3>Products & stock</h3><p>Catalog details, pricing, images and available inventory.</p></div><button class="button button-dark" type="button" data-action="new-product">Add a pair <span>+</span></button></div><div class="table-wrap"><table class="admin-table"><thead><tr><th>Pair</th><th>Price (₱)</th><th>Stock</th><th>Visibility</th><th></th></tr></thead><tbody>${data.products.map(product => `<tr data-product-row="${escapeHtml(product.id)}"><td><strong>${escapeHtml(product.name)}</strong><br><small>${escapeHtml(product.sku)}${product.image_url ? " · image ready" : " · no image"}</small></td><td><input data-product-price value="${(product.price / 100).toFixed(0)}" type="number" min="1" aria-label="Price for ${escapeHtml(product.name)}"></td><td><input data-product-stock value="${product.inventory}" type="number" min="0" aria-label="Stock for ${escapeHtml(product.name)}"></td><td><select data-product-active aria-label="Visibility for ${escapeHtml(product.name)}"><option value="true" ${product.is_active ? "selected" : ""}>Live</option><option value="false" ${!product.is_active ? "selected" : ""}>Hidden</option></select></td><td><button class="switch-button" type="button" data-action="save-product" data-id="${escapeHtml(product.id)}">Save</button></td></tr>`).join("")}</tbody></table></div>`;
     } else if (state.adminTab === "customers") {
       body = `<div class="admin-topline"><div><h3>Customers</h3><p>People who’ve made Shoeline part of their day.</p></div></div><div class="table-wrap"><table class="admin-table"><thead><tr><th>Name</th><th>Role</th><th>Joined</th></tr></thead><tbody>${data.customers.map(customer => `<tr><td>${escapeHtml(customer.full_name || "Shoeline member")}</td><td>${escapeHtml(customer.role)}</td><td>${new Date(customer.created_at).toLocaleDateString("en-PH")}</td></tr>`).join("") || `<tr><td colspan="3">No customers yet.</td></tr>`}</tbody></table></div>`;
     } else if (state.adminTab === "returns") {
       body = `<div class="admin-topline"><div><h3>Returns</h3><p>Keep the experience easy, even when a pair isn’t quite right.</p></div></div>${data.returns.length ? `<div class="table-wrap"><table class="admin-table"><thead><tr><th>Order</th><th>Customer</th><th>Reason</th><th>Status</th></tr></thead><tbody>${data.returns.map(request => `<tr><td>${escapeHtml(request.orders?.order_number || "—")}</td><td>${escapeHtml(request.orders?.profiles?.full_name || "Customer")}</td><td>${escapeHtml(request.reason)}</td><td>${escapeHtml(request.status)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="admin-empty">No return requests yet.</div>`}`;
+    } else if (state.adminTab === "reviews") {
+      body = `<div class="admin-topline"><div><h3>Product reviews</h3><p>Approve verified-purchase reviews before they appear in the storefront.</p></div></div>${data.reviews.length ? `<div class="table-wrap"><table class="admin-table"><thead><tr><th>Product / reviewer</th><th>Rating</th><th>Review</th><th>Status</th><th></th></tr></thead><tbody>${data.reviews.map(review => `<tr><td><strong>${escapeHtml(review.products?.name || "Product")}</strong><br><small>${escapeHtml(review.profiles?.full_name || "Shoeline customer")} · ${new Date(review.created_at).toLocaleDateString("en-PH")}</small></td><td><span class="product-stars">${"★".repeat(review.rating)}${"☆".repeat(5 - review.rating)}</span></td><td><strong>${escapeHtml(review.title || "Customer review")}</strong><br><small>${escapeHtml(review.body)}</small></td><td>${review.is_approved ? "Published" : "Needs review"}</td><td>${review.is_approved ? `<button class="switch-button" type="button" data-action="moderate-review" data-id="${escapeHtml(review.id)}" data-approved="false">Hide</button>` : `<button class="switch-button" type="button" data-action="moderate-review" data-id="${escapeHtml(review.id)}" data-approved="true">Approve</button>`} <button class="switch-button danger-link" type="button" data-action="delete-review" data-id="${escapeHtml(review.id)}">Delete</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="admin-empty">No product reviews yet.</div>`}`;
+    } else if (state.adminTab === "access") {
+      body = `<div class="admin-topline"><div><h3>Team access</h3><p>Grant owner access only to an existing verified account.</p></div></div><form id="adminAccessForm"><div class="field"><label for="adminAccessEmail">Account email</label><input id="adminAccessEmail" name="email" type="email" autocomplete="email" required></div><button class="button button-dark" type="submit">Grant owner access <span>↗</span></button></form><p class="notice">The account must already exist and have a confirmed email. Changes are recorded in the owner activity log.</p>`;
     } else {
       body = `<div class="admin-topline"><div><h3>Team quotes</h3><p>Bulk requests from schools, clubs and communities.</p></div></div>${data.quotes.length ? `<div class="table-wrap"><table class="admin-table"><thead><tr><th>Organization</th><th>Contact</th><th>Pairs</th><th>Status</th></tr></thead><tbody>${data.quotes.map(quote => `<tr><td>${escapeHtml(quote.organization)}</td><td>${escapeHtml(quote.email)}</td><td>${quote.quantity}</td><td>${escapeHtml(quote.status)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="admin-empty">No team requests yet.</div>`}`;
     }
@@ -543,8 +652,175 @@
 
   function renderOrderTable(orders) {
     if (!orders.length) return `<div class="admin-empty">No orders are waiting right now.</div>`;
-    const statuses = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"];
-    return `<div class="table-wrap"><table class="admin-table"><thead><tr><th>Order</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th></tr></thead><tbody>${orders.map(order => `<tr><td><strong>${escapeHtml(order.order_number)}</strong><br><small>${new Date(order.created_at).toLocaleDateString("en-PH")}</small></td><td>${escapeHtml(order.profiles?.full_name || "Customer")}</td><td>${(order.order_items || []).reduce((sum, item) => sum + item.quantity, 0)}</td><td>${money(order.total)}</td><td><select data-order-status="${escapeHtml(order.id)}" aria-label="Order status for ${escapeHtml(order.order_number)}">${statuses.map(status => `<option value="${status}" ${status === order.status ? "selected" : ""}>${status}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>`;
+    const statuses = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled", "refunded"];
+    return `<div class="table-wrap"><table class="admin-table"><thead><tr><th>Order</th><th>Customer / delivery</th><th>Items</th><th>Total</th><th>Status</th><th></th></tr></thead><tbody>${orders.map(order => {
+      const address = order.shipping_address || {};
+      const items = (order.order_items || []).map(item => `${item.product_name} × ${item.quantity}`).join(", ");
+      const deletable = order.status === "delivered" || order.status === "cancelled";
+      return `<tr><td><strong>${escapeHtml(order.order_number)}</strong><br><small>${new Date(order.created_at).toLocaleDateString("en-PH")}</small></td><td>${escapeHtml(order.profiles?.full_name || "Customer")}<br><small>${escapeHtml(address.phone || "")} · ${escapeHtml([address.city, address.region].filter(Boolean).join(", "))}</small></td><td><small>${escapeHtml(items || "No item details")}</small></td><td>${money(order.total)}</td><td><select data-order-status="${escapeHtml(order.id)}" aria-label="Order status for ${escapeHtml(order.order_number)}">${statuses.map(status => `<option value="${status}" ${status === order.status ? "selected" : ""}>${status}</option>`).join("")}</select></td><td>${deletable ? `<button class="switch-button danger-link" type="button" data-action="delete-order" data-id="${escapeHtml(order.id)}" data-order-number="${escapeHtml(order.order_number)}">Delete</button>` : "—"}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+  }
+
+  function setAdminLiveStatus(message, isError = false) {
+    const status = $("#adminLiveStatus");
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle("error", isError);
+  }
+
+  async function refreshAdminOrders() {
+    if (!state.adminData || state.adminRefreshInFlight || document.visibilityState !== "visible") return;
+    state.adminRefreshInFlight = true;
+    try {
+      state.adminData.orders = await dbRequest("orders?select=id,order_number,status,payment_status,payment_method,total,created_at,shipping_address,customer_note,profiles(full_name),order_items(product_name,quantity,unit_price)&order=created_at.desc&limit=100");
+      if (!state.realtimeSocket || state.realtimeSocket.readyState !== WebSocket.OPEN) {
+        setAdminLiveStatus(`Auto-refresh active · updated ${new Date().toLocaleTimeString("en-PH")}`);
+      }
+      if (state.adminTab === "overview" || state.adminTab === "orders") renderAdmin();
+    } catch (error) {
+      setAdminLiveStatus(`Order refresh failed: ${error.message}`, true);
+      throw error;
+    } finally {
+      state.adminRefreshInFlight = false;
+    }
+  }
+
+  function connectAdminRealtime() {
+    if (!state.adminLiveActive || !state.session?.access_token || !("WebSocket" in window)) {
+      setAdminLiveStatus("Auto-refresh active · live stream unavailable");
+      return;
+    }
+    let socket;
+    try {
+      const endpoint = new URL("/realtime/v1/websocket", state.config.supabaseUrl);
+      endpoint.protocol = endpoint.protocol === "https:" ? "wss:" : "ws:";
+      endpoint.searchParams.set("apikey", state.config.supabaseAnonKey);
+      endpoint.searchParams.set("vsn", "1.0.0");
+      socket = new WebSocket(endpoint);
+    } catch (error) {
+      const delay = scheduleAdminRealtimeReconnect();
+      setAdminLiveStatus(`Live order stream unavailable: ${error.message}. Retrying in ${Math.round(delay / 1000)}s; auto-refresh remains active.`, true);
+      return;
+    }
+    state.realtimeSocket = socket;
+
+    socket.addEventListener("open", () => {
+      if (!state.adminLiveActive || socket !== state.realtimeSocket) return;
+      state.realtimeRef = 1;
+      socket.send(JSON.stringify({
+        topic: "realtime:public:orders",
+        event: "phx_join",
+        payload: {
+          config: {
+            broadcast: { ack: false, self: false },
+            presence: { enabled: false, key: "" },
+            postgres_changes: [{ event: "*", schema: "public", table: "orders" }],
+            private: false
+          },
+          access_token: state.session.access_token
+        },
+        ref: "1",
+        join_ref: "1"
+      }));
+      state.realtimeHeartbeat = setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        state.realtimeRef += 1;
+        socket.send(JSON.stringify({
+          topic: "phoenix",
+          event: "heartbeat",
+          payload: {},
+          ref: String(state.realtimeRef),
+          join_ref: null
+        }));
+      }, 25000);
+    });
+
+    socket.addEventListener("message", event => {
+      if (socket !== state.realtimeSocket) return;
+      const message = safeJson(event.data, null);
+      if (!message || typeof message !== "object") {
+        setAdminLiveStatus("Live order stream sent an unreadable message; auto-refresh remains active.", true);
+        return;
+      }
+      if (message.event === "phx_reply" && message.ref === "1") {
+        if (message.payload?.status === "ok") {
+          state.realtimeReconnectAttempts = 0;
+          setAdminLiveStatus("Live order updates connected.");
+        } else {
+          setAdminLiveStatus("Live order subscription was rejected; auto-refresh remains active.", true);
+          socket.close(4001, "Order subscription rejected");
+        }
+      } else if (message.event === "postgres_changes") {
+        refreshAdminOrders().catch(() => {});
+      } else if (message.event === "phx_error" || message.event === "phx_close") {
+        setAdminLiveStatus("Live order stream disconnected; auto-refresh remains active.", true);
+        socket.close(4002, "Order subscription disconnected");
+      }
+    });
+
+    socket.addEventListener("error", () => {
+      if (socket !== state.realtimeSocket) return;
+      setAdminLiveStatus("Live order stream unavailable; auto-refresh remains active.", true);
+    });
+    socket.addEventListener("close", () => {
+      if (socket !== state.realtimeSocket) return;
+      if (state.realtimeHeartbeat) clearInterval(state.realtimeHeartbeat);
+      state.realtimeHeartbeat = null;
+      state.realtimeSocket = null;
+      if (!state.adminLiveActive) return;
+      const delay = scheduleAdminRealtimeReconnect();
+      setAdminLiveStatus(`Reconnecting to live orders in ${Math.round(delay / 1000)}s; auto-refresh remains active.`);
+    });
+  }
+
+  function scheduleAdminRealtimeReconnect() {
+    if (!state.adminLiveActive) return 0;
+    if (state.realtimeReconnectTimer) clearTimeout(state.realtimeReconnectTimer);
+    const delay = Math.min(5000 * (2 ** state.realtimeReconnectAttempts), 60000);
+    state.realtimeReconnectAttempts = Math.min(state.realtimeReconnectAttempts + 1, 4);
+    state.realtimeReconnectTimer = setTimeout(() => {
+      state.realtimeReconnectTimer = null;
+      connectAdminRealtime();
+    }, delay);
+    return delay;
+  }
+
+  function startAdminLiveUpdates() {
+    stopAdminLiveUpdates();
+    state.adminLiveActive = true;
+    state.adminRefreshTimer = setInterval(() => {
+      refreshAdminOrders().catch(() => {});
+    }, 12000);
+    connectAdminRealtime();
+  }
+
+  function syncRealtimeAccessToken() {
+    const socket = state.realtimeSocket;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    state.realtimeRef += 1;
+    socket.send(JSON.stringify({
+      topic: "realtime:public:orders",
+      event: "access_token",
+      payload: { access_token: state.session.access_token },
+      ref: String(state.realtimeRef),
+      join_ref: "1"
+    }));
+  }
+
+  function stopAdminLiveUpdates() {
+    state.adminLiveActive = false;
+    if (state.adminRefreshTimer) clearInterval(state.adminRefreshTimer);
+    if (state.realtimeHeartbeat) clearInterval(state.realtimeHeartbeat);
+    if (state.realtimeReconnectTimer) clearTimeout(state.realtimeReconnectTimer);
+    state.adminRefreshTimer = null;
+    state.realtimeHeartbeat = null;
+    state.realtimeReconnectTimer = null;
+    state.realtimeReconnectAttempts = 0;
+    if (state.realtimeSocket) {
+      const socket = state.realtimeSocket;
+      state.realtimeSocket = null;
+      socket.close(1000, "Owner dashboard closed");
+    }
   }
 
   function newProductForm() {
@@ -557,11 +833,53 @@
           <div class="field"><label for="productAudience">Audience</label><select id="productAudience" name="audience"><option>Unisex</option><option>Men</option><option>Women</option><option>Kids</option></select></div>
           <div class="field"><label for="productCategory">Category</label><input id="productCategory" name="category" required maxlength="50" placeholder="Lifestyle"></div>
           <div class="field"><label for="productPrice">Price (₱)</label><input id="productPrice" name="price" type="number" min="1" required></div>
+          <div class="field"><label for="productCompareAt">Compare-at price (₱)</label><input id="productCompareAt" name="compare_at" type="number" min="0" value="0"></div>
           <div class="field"><label for="productStock">Starting stock</label><input id="productStock" name="inventory" type="number" min="0" value="0" required></div>
-          <div class="field"><label for="productColor">Card color</label><input id="productColor" name="color" type="color" value="#d8e6a8"></div>
+          <div class="field"><label for="productColor">Card color</label><input id="productColor" name="color" type="color" value="#e7e9f4"></div>
+          <div class="field full"><label for="productDescription">Product description</label><textarea id="productDescription" name="description" maxlength="1000" required></textarea></div>
+          <div class="field full"><label for="productImage">HD product photo</label><input id="productImage" name="image" type="file" accept="image/jpeg,image/png,image/webp,image/avif" required><p class="notice">JPEG, PNG, WebP or AVIF · up to 8 MB. Use photos you own or are licensed to use.</p><img id="productImagePreview" class="product-image-preview" alt="Selected product photo preview" hidden></div>
         </div>
         <button class="button button-dark form-submit" type="submit">Add to the catalog <span>↗</span></button>
       </form>`, { eyebrow: "OWNER / PRODUCT CATALOG" });
+  }
+
+  async function uploadProductImage(file) {
+    const extensions = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/avif": "avif" };
+    if (!extensions[file.type]) throw new Error("Choose a JPEG, PNG, WebP or AVIF image.");
+    if (file.size < 1 || file.size > 8 * 1024 * 1024) throw new Error("Product images must be smaller than 8 MB.");
+    if (!state.session?.access_token) throw new Error("Sign in with an owner account to upload product photos.");
+
+    const path = `${Date.now()}-${crypto.randomUUID()}.${extensions[file.type]}`;
+    const response = await fetch(`${state.config.supabaseUrl}/storage/v1/object/shoeline-product-images/${path}`, {
+      method: "POST",
+      headers: {
+        apikey: state.config.supabaseAnonKey,
+        Authorization: `Bearer ${state.session.access_token}`,
+        "Content-Type": file.type,
+        "x-upsert": "false"
+      },
+      body: file
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || "The product image could not be uploaded.");
+    return {
+      path,
+      url: `${state.config.supabaseUrl}/storage/v1/object/public/shoeline-product-images/${encodeURIComponent(path)}`
+    };
+  }
+
+  async function removeProductImage(path) {
+    const response = await fetch(`${state.config.supabaseUrl}/storage/v1/object/shoeline-product-images`, {
+      method: "DELETE",
+      headers: {
+        apikey: state.config.supabaseAnonKey,
+        Authorization: `Bearer ${state.session.access_token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prefixes: [path] })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || "The unused product image could not be removed.");
   }
 
   async function saveProduct(productId) {
@@ -590,60 +908,122 @@
   }
 
   async function updateOrder(orderId, status) {
-    await dbRequest(`orders?id=eq.${encodeURIComponent(orderId)}`, {
-      method: "PATCH",
-      body: { status },
-      prefer: "return=minimal"
-    });
-    await dbRequest("admin_activity_logs", {
+    await dbRequest("rpc/admin_update_order_status", {
       method: "POST",
-      body: { admin_id: currentUserId(), action: `changed order status to ${status}`, entity_type: "order", entity_id: orderId },
-      prefer: "return=minimal"
+      body: { p_order_id: orderId, p_status: status }
     });
     await loadAdminData();
     renderAdmin();
     showToast("Order status updated.");
   }
 
+  async function deleteOrder(orderId, orderNumber) {
+    const order = state.adminData?.orders.find(item => item.id === orderId);
+    if (!order || !["delivered", "cancelled"].includes(order.status)) {
+      throw new Error("Only delivered or cancelled orders can be deleted.");
+    }
+    if (!window.confirm(`Permanently delete ${orderNumber || order.order_number}? This cannot be undone.`)) return;
+    await dbRequest("rpc/admin_delete_order", {
+      method: "POST",
+      body: { p_order_id: orderId }
+    });
+    await loadAdminData();
+    renderAdmin();
+    showToast("Order deleted.");
+  }
+
+  async function moderateReview(reviewId, isApproved) {
+    await dbRequest(`product_reviews?id=eq.${encodeURIComponent(reviewId)}`, {
+      method: "PATCH",
+      body: { is_approved: isApproved },
+      prefer: "return=minimal"
+    });
+    await Promise.all([loadAdminData(), loadProducts()]);
+    renderAdmin();
+    showToast(isApproved ? "Review published." : "Review hidden.");
+  }
+
+  async function deleteReview(reviewId) {
+    if (!window.confirm("Permanently delete this review?")) return;
+    await dbRequest(`product_reviews?id=eq.${encodeURIComponent(reviewId)}`, { method: "DELETE" });
+    await Promise.all([loadAdminData(), loadProducts()]);
+    renderAdmin();
+    showToast("Review deleted.");
+  }
+
+  async function grantAdminAccess(email) {
+    await dbRequest("rpc/admin_grant_user_admin", {
+      method: "POST",
+      body: { p_email: email.trim() }
+    });
+    await loadAdminData();
+    renderAdmin();
+    showToast("Owner access granted to the verified account.");
+  }
+
   async function createProduct(form) {
     const values = Object.fromEntries(new FormData(form).entries());
     const price = Number(values.price);
+    const compareAt = Number(values.compare_at || 0);
     const inventory = Number(values.inventory);
-    if (!Number.isFinite(price) || price < 1 || !Number.isInteger(inventory) || inventory < 0) throw new Error("Enter a valid price and stock quantity.");
+    const file = form.elements.image.files[0];
+    if (!Number.isFinite(price) || price < 1 || !Number.isFinite(compareAt) || compareAt < 0 || !Number.isInteger(inventory) || inventory < 0) throw new Error("Enter a valid price and stock quantity.");
+    if (!file) throw new Error("Choose a product image before adding this pair.");
     const slug = `${values.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${Date.now().toString(36)}`;
-    await dbRequest("products", {
-      method: "POST",
-      body: {
-        sku: values.sku.trim(),
-        slug,
-        name: values.name.trim(),
-        brand: values.brand.trim(),
-        category: values.category.trim(),
-        audience: values.audience,
-        price: Math.round(price * 100),
-        inventory,
-        color: values.color,
-        icon: "👟",
-        badge: "JUST IN",
-        is_new: true,
-        is_active: true
-      },
-      prefer: "return=minimal"
-    });
-    await loadAdminData();
+    const image = await uploadProductImage(file);
+    try {
+      const created = await dbRequest("products?select=id", {
+        method: "POST",
+        body: {
+          sku: values.sku.trim(),
+          slug,
+          name: values.name.trim(),
+          brand: values.brand.trim(),
+          category: values.category.trim(),
+          audience: values.audience,
+          description: values.description.trim(),
+          price: Math.round(price * 100),
+          compare_at: Math.round(compareAt * 100),
+          inventory,
+          image_url: image.url,
+          color: values.color,
+          icon: "👟",
+          badge: "JUST IN",
+          is_new: true,
+          is_active: true
+        },
+        prefer: "return=representation"
+      });
+      if (!created?.[0]?.id) throw new Error("The product was not returned after saving.");
+    } catch (error) {
+      try {
+        await removeProductImage(image.path);
+      } catch (cleanupError) {
+        throw new Error(`${error.message} The uploaded photo also could not be cleaned up: ${cleanupError.message}`);
+      }
+      throw error;
+    }
+
     await loadProducts();
-    renderAdmin();
+    closeModal();
+    await openAdmin("products");
     showToast("Your new pair is live.");
   }
 
   function registerHandlers() {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && state.adminLiveActive) {
+        refreshAdminOrders().catch(() => {});
+      }
+    });
+
     document.addEventListener("click", async event => {
       const button = event.target.closest("[data-action]");
       if (button) {
         const { action, id, tab, mode, delta } = button.dataset;
         try {
           if (action === "close-modal") closeModal();
-          else if (action === "account") isAdmin() ? await openAdmin() : state.profile ? openCustomer() : authForm();
+          else if (action === "account") state.profile ? openCustomer() : authForm();
           else if (action === "auth-mode") authForm(mode);
           else if (action === "signout") await signOut();
           else if (action === "cart") openCart();
@@ -661,6 +1041,7 @@
           else if (action === "cart-qty") changeCart(id, Number(delta));
           else if (action === "wishlist") openWishlist();
           else if (action === "toggle-wish") await toggleWishlist(id);
+          else if (action === "product-reviews") await openProductReviews(id);
           else if (action === "quote") openQuote();
           else if (action === "customer") openCustomer(tab);
           else if (action === "admin-tab") {
@@ -669,6 +1050,9 @@
           }
           else if (action === "new-product") newProductForm();
           else if (action === "save-product") await saveProduct(id);
+          else if (action === "delete-order") await deleteOrder(id, button.dataset.orderNumber);
+          else if (action === "moderate-review") await moderateReview(id, button.dataset.approved === "true");
+          else if (action === "delete-review") await deleteReview(id);
         } catch (error) {
           showToast(error.message || "That didn’t work. Please try again.", true);
         }
@@ -696,7 +1080,7 @@
           const data = new FormData(form);
           if (form.dataset.mode === "register") {
             const confirmed = await signUp(data.get("name").trim(), data.get("email").trim(), data.get("password"));
-            if (!confirmed) authForm("login", "Check your inbox to confirm your email, then sign in.");
+            if (!confirmed) authForm("login", "Email confirmation is enabled for this store. Confirm your email, then sign in.");
             else {
               closeModal();
               openCustomer("overview");
@@ -705,8 +1089,7 @@
           } else {
             await signIn(data.get("email").trim(), data.get("password"));
             closeModal();
-            if (isAdmin()) await openAdmin();
-            else openCustomer("overview");
+            openCustomer("overview");
             showToast("Welcome back.");
           }
         } else if (form.id === "checkoutForm") {
@@ -715,6 +1098,11 @@
           await submitReturn(form);
         } else if (form.id === "quoteForm") {
           await submitQuote(form);
+        } else if (form.id === "reviewForm") {
+          await submitReview(form);
+        } else if (form.id === "adminAccessForm") {
+          const email = new FormData(form).get("email");
+          await grantAdminAccess(email);
         } else if (form.id === "productForm") {
           await createProduct(form);
         }
@@ -725,9 +1113,18 @@
 
     document.addEventListener("change", async event => {
       const select = event.target.closest("[data-order-status]");
-      if (!select) return;
-      try { await updateOrder(select.dataset.orderStatus, select.value); }
-      catch (error) { showToast(error.message || "Could not update the order.", true); }
+      if (select) {
+        try { await updateOrder(select.dataset.orderStatus, select.value); }
+        catch (error) { showToast(error.message || "Could not update the order.", true); }
+        return;
+      }
+      if (event.target.id === "productImage" && event.target.files?.[0]) {
+        if (state.productPreviewUrl) URL.revokeObjectURL(state.productPreviewUrl);
+        state.productPreviewUrl = URL.createObjectURL(event.target.files[0]);
+        const preview = $("#productImagePreview");
+        preview.src = state.productPreviewUrl;
+        preview.hidden = false;
+      }
     });
 
     $("#productGrid").addEventListener("pointermove", event => {
