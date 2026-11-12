@@ -398,7 +398,7 @@ body::before{position:fixed;z-index:-1;inset:0;content:"";pointer-events:none;ba
 
 .hero-shoe{width:100%;height:auto;translate:var(--pointer-x,0) var(--pointer-y,0);transform-style:preserve-3d;animation:shoe-float 5.5s ease-in-out infinite}
 .hero-shoe:before{left:10%;right:11%;bottom:12%;height:13%;background:#ff745c38;filter:blur(30px)}
-.hero-product-photo{position:relative;z-index:1;display:block;width:112%;max-width:760px;height:auto;overflow:visible;transform:rotate(-12deg) rotateY(-12deg) translateZ(42px);transform-origin:center;transform-style:preserve-3d;filter:drop-shadow(0 34px 30px #0009) saturate(.94) contrast(1.04);transition:transform .45s cubic-bezier(.2,.8,.2,1),filter .45s}
+.hero-product-photo{position:relative;z-index:1;display:block;width:100%;max-width:760px;height:auto;overflow:visible;transform:rotate(-12deg) rotateY(-12deg) translateZ(42px);transform-origin:center;transform-style:preserve-3d;filter:drop-shadow(0 34px 30px #0009) saturate(.94) contrast(1.04);transition:transform .45s cubic-bezier(.2,.8,.2,1),filter .45s}
 .hero-art:hover .hero-product-photo{transform:rotate(-8deg) rotateY(-6deg) translate3d(0,-7px,68px) scale(1.045);filter:drop-shadow(0 42px 34px #000a) saturate(1.04) contrast(1.04)}
 .art-credit{position:absolute;z-index:3;left:2%;bottom:3%;max-width:245px;margin:0;padding:5px 7px;border-radius:6px;background:#0b0d13c9;color:#d0d2df;font-size:8px;line-height:1.6;letter-spacing:.2px;backdrop-filter:blur(8px)}
 .art-credit a{color:#d0d2df;text-decoration:underline;text-decoration-color:#8f93ac;text-underline-offset:2px}
@@ -410,13 +410,13 @@ body::before{position:fixed;z-index:-1;inset:0;content:"";pointer-events:none;ba
   .site-nav a{padding-inline:10px}
   .hero{min-height:clamp(530px,70vw,660px)}
   .hero-art{min-height:390px}
-  .hero-product-photo{width:120%}
+  .hero-product-photo{width:100%}
 }
 @media(max-width:700px){
   html{scroll-padding-top:150px}
   .site-header{padding-bottom:4px}
   .hero-art{min-height:clamp(250px,72vw,330px)}
-  .hero-product-photo{width:116%;max-width:580px;transform:rotate(-10deg) rotateY(-8deg) translateZ(22px)}
+  .hero-product-photo{width:100%;max-width:580px;transform:rotate(-10deg) rotateY(-8deg) translateZ(22px)}
   .hero-art:hover .hero-product-photo{transform:rotate(-8deg) rotateY(-5deg) translate3d(0,-4px,34px) scale(1.025)}
   .art-credit{left:2%;bottom:4px;max-width:190px;font-size:7px}
   .hero-index{left:auto;right:24px;bottom:12px}
