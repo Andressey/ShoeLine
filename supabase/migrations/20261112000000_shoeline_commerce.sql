@@ -385,7 +385,8 @@ drop policy if exists "Users view their return requests" on public.return_reques
 create policy "Users view their return requests" on public.return_requests for select to authenticated using (user_id = (select auth.uid()) or (select public.is_admin()));
 drop policy if exists "Users request returns on their orders" on public.return_requests;
 create policy "Users request returns on their orders" on public.return_requests for insert to authenticated with check (
-  user_id = (select auth.uid()) and exists (select 1 from public.orders o where o.id = order_id and o.user_id = (select auth.uid()))
+  user_id = (select auth.uid()) and status = 'requested'
+  and exists (select 1 from public.orders o where o.id = order_id and o.user_id = (select auth.uid()))
 );
 drop policy if exists "Admins manage return requests" on public.return_requests;
 create policy "Admins manage return requests" on public.return_requests for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
@@ -393,7 +394,10 @@ create policy "Admins manage return requests" on public.return_requests for all 
 drop policy if exists "Approved product reviews are public" on public.product_reviews;
 create policy "Approved product reviews are public" on public.product_reviews for select to anon, authenticated using (is_approved or user_id = (select auth.uid()) or (select public.is_admin()));
 drop policy if exists "Customers can write reviews" on public.product_reviews;
-create policy "Customers can write reviews" on public.product_reviews for insert to authenticated with check (user_id = (select auth.uid()));
+create policy "Customers can write reviews" on public.product_reviews for insert to authenticated with check (
+  user_id = (select auth.uid()) and not is_approved
+  and (order_id is null or exists (select 1 from public.orders o where o.id = order_id and o.user_id = (select auth.uid())))
+);
 drop policy if exists "Admins manage reviews" on public.product_reviews;
 create policy "Admins manage reviews" on public.product_reviews for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
 
