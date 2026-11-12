@@ -84,6 +84,16 @@
     button.classList.remove("playing");
   }
 
+  function tryAutoplayBackgroundMusic() {
+    const audio = $("#backgroundMusic");
+    audio.volume = 0.35;
+    audio.play().catch(error => {
+      if (error.name !== "NotAllowedError" && !audio.error) {
+        showToast("Background music could not be played.", true);
+      }
+    });
+  }
+
   function setSession(session) {
     state.session = session;
     if (session) {
@@ -1056,7 +1066,7 @@
   function registerHandlers() {
     document.addEventListener("click", event => {
       const target = event.target.closest(".site-nav a, #filters [role='tab'], .modal-tabs [data-action='customer'], .admin-nav [data-action='admin-tab']");
-      if (!target || target.matches("[aria-selected='true'], .active")) return;
+      if (!target) return;
       const label = target.textContent.trim().replace(/\s+/g, " ");
       showNavigationPreview(`Loading ${label}…`);
     }, true);
@@ -1247,6 +1257,7 @@
 
   async function initialize() {
     registerHandlers();
+    tryAutoplayBackgroundMusic();
     initializeMotion();
     try {
       await loadConfig();

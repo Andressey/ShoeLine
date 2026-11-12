@@ -48,7 +48,7 @@ Save the variables and redeploy the latest `main` commit. The repo’s [`vercel.
 ## Features
 
 - Searchable, filterable catalog with animated ambient art, 3D-style product motion and responsive layouts
-- Shoeline brand mark in the storefront, owner dashboard and favicon; optional, user-started background music
+- Shoeline brand mark in the storefront, owner dashboard and favicon; background music attempts autoplay with a play-button fallback for browser restrictions
 - Store locator section with searchable Google Maps preview and directions link
 - Supabase Auth sign-up/sign-in, customer profile, wishlist, order history, saved delivery addresses and returns
 - Transactional order creation that re-checks live prices and stock, reserves inventory and creates pending orders
