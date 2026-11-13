@@ -54,6 +54,7 @@ Save the variables and redeploy the latest `main` commit. The repo’s [`vercel.
 - Store locator section with searchable Google Maps preview and directions link
 - Supabase Auth sign-up/sign-in, customer profile, wishlist, order history, saved delivery addresses and returns
 - Transactional order creation that re-checks live prices and stock, reserves inventory and creates pending orders
+- Post-checkout order tracking by Shoeline fulfillment status (no carrier tracking integration yet) and printable receipts customers can save as PDF
 - Profile-accessible, role-protected owner dashboard for products, inventory, order status, customers, returns, reviews and team access
 - Product photo uploads to an admin-only Supabase Storage bucket; public catalog images are served through the bucket’s public URLs
 - Verified-purchase reviews with owner moderation, live order subscriptions with automatic refresh fallback, and order status controls
@@ -61,7 +62,7 @@ Save the variables and redeploy the latest `main` commit. The repo’s [`vercel.
 - Business quote submissions, promotions, customer carts and requisition lists
 - Accessible modal interactions and reduced-motion support
 
-The checkout currently supports **cash on delivery**. It does not collect card details or claim to process online payments. Add a payment provider later through a server-side integration and verified webhooks.
+The checkout currently supports **cash on delivery**. Receipts confirm the order and do not indicate payment was collected while its payment status is pending. The site does not collect card details or claim to process online payments. Add a payment provider later through a server-side integration and verified webhooks.
 
 ## Local preview
 

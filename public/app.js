@@ -309,6 +309,7 @@
     $("#modal").classList.remove("open");
     $("#modal").setAttribute("aria-hidden", "true");
     document.body.classList.remove("modal-open");
+    document.body.classList.remove("print-receipt");
   }
 
   function authForm(mode = "login", message = "") {
@@ -491,7 +492,7 @@
       let refreshNotice = "";
       try { await loadProducts(); }
       catch { refreshNotice = " Your order is safe, but the live stock display could not refresh."; }
-      openModal("You’re all set.", `<div class="cart-empty"><span>✳</span><strong>Your order is on its way to becoming a good day.</strong><p>Order ${escapeHtml(String(orderId).slice(0, 8).toUpperCase())} is confirmed. We’ll collect payment on delivery.${addressSaved ? "" : " Your order is safe, but we couldn’t save this address for next time."}${refreshNotice}</p><button class="button button-dark" type="button" data-action="customer" data-tab="orders">View your order <span>↗</span></button></div>`, { eyebrow: "ORDER PLACED" });
+      openModal("You’re all set.", `<div class="cart-empty"><span>✳</span><strong>Your order is on its way to becoming a good day.</strong><p>Your order is confirmed. We’ll collect payment on delivery.${addressSaved ? "" : " Your order is safe, but we couldn’t save this address for next time."}${refreshNotice}</p><button class="button button-dark form-submit" type="button" data-action="order-details" data-id="${escapeHtml(orderId)}">Track your order & view receipt <span>↗</span></button><button class="button button-outline form-submit" type="button" data-action="customer" data-tab="orders">View all orders</button></div>`, { eyebrow: "ORDER PLACED" });
       showToast("Order placed. Thank you for choosing Shoeline.");
     } catch (error) {
       showToast(error.message || "We couldn’t place that order. Check your details and try again.", true);
@@ -500,7 +501,104 @@
 
   async function loadOrders() {
     if (!currentUserId()) return [];
-    return dbRequest(`orders?select=id,order_number,status,payment_status,payment_method,total,currency,created_at,order_items(product_name,quantity,unit_price)&user_id=eq.${encodeURIComponent(currentUserId())}&order=created_at.desc`);
+    return dbRequest(`orders?select=id,order_number,status,payment_status,payment_method,subtotal,shipping_total,total,currency,created_at,updated_at,shipping_address,order_items(sku,product_name,quantity,unit_price)&user_id=eq.${encodeURIComponent(currentUserId())}&order=created_at.desc`);
+  }
+
+  async function loadCustomerOrder(orderId) {
+    if (!currentUserId()) throw new Error("Sign in to view your order.");
+    const orders = await dbRequest(`orders?select=id,order_number,status,payment_status,payment_method,subtotal,shipping_total,total,currency,created_at,updated_at,shipping_address,order_items(sku,product_name,quantity,unit_price)&id=eq.${encodeURIComponent(orderId)}&user_id=eq.${encodeURIComponent(currentUserId())}&limit=1`);
+    if (!orders.length) throw new Error("That order could not be found in your account.");
+    return orders[0];
+  }
+
+  function orderDate(value) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? "—"
+      : date.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  function orderProgressMarkup(order) {
+    const steps = [
+      ["pending", "Order received"],
+      ["confirmed", "Confirmed"],
+      ["processing", "Preparing"],
+      ["shipped", "Shipped"],
+      ["delivered", "Delivered"]
+    ];
+    const status = String(order.status || "").toLowerCase();
+    const activeStep = steps.findIndex(([value]) => value === status);
+    const terminalMessage = status === "cancelled"
+      ? "This order was cancelled. Any reserved stock has been released."
+      : status === "refunded"
+        ? "This order has been refunded and is no longer in delivery transit."
+        : "";
+    const progress = terminalMessage
+      ? `<p class="order-terminal-message">${escapeHtml(terminalMessage)}</p>`
+      : `<ol class="order-progress" aria-label="Order progress">${steps.map((step, index) => {
+        const complete = index < activeStep;
+        const current = index === activeStep;
+        return `<li class="order-progress-step${complete ? " is-complete" : ""}${current ? " is-current" : ""}"${current ? ' aria-current="step"' : ""}><span class="order-progress-marker" aria-hidden="true"></span><span>${step[1]}</span></li>`;
+      }).join("")}</ol>`;
+    return `<section class="order-tracker" aria-labelledby="orderTrackerTitle">
+      <div class="order-tracker-heading"><div><p class="eyebrow">ORDER STATUS</p><h3 id="orderTrackerTitle">${escapeHtml(order.order_number)}</h3></div><div class="order-tracker-actions"><span class="status-pill">${escapeHtml(status)}</span><button class="switch-button" type="button" data-action="order-details" data-id="${escapeHtml(order.id)}">Refresh status</button></div></div>
+      ${progress}
+      <p class="order-tracker-meta">Placed ${escapeHtml(orderDate(order.created_at))} · Last updated ${escapeHtml(orderDate(order.updated_at || order.created_at))}</p>
+      <p class="notice">Status updates appear here as Shoeline processes your order. Carrier tracking is not available yet.</p>
+    </section>`;
+  }
+
+  function orderReceiptMarkup(order) {
+    const address = order.shipping_address || {};
+    const addressLines = [
+      address.recipient_name,
+      address.phone,
+      address.line1,
+      address.line2,
+      [address.city, address.region, address.postal_code].filter(Boolean).join(", "),
+      address.country === "PH" ? "Philippines" : address.country
+    ].filter(Boolean);
+    const items = Array.isArray(order.order_items) ? order.order_items : [];
+    const itemRows = items.map(item => `<tr>
+      <td><strong>${escapeHtml(item.product_name)}</strong><small>${escapeHtml(item.sku || "")}</small></td>
+      <td>${Number(item.quantity) || 0}</td>
+      <td>${money(item.unit_price)}</td>
+      <td>${money(Number(item.unit_price) * Number(item.quantity))}</td>
+    </tr>`).join("");
+    const paymentMethod = order.payment_method === "cash_on_delivery"
+      ? "Cash on delivery"
+      : String(order.payment_method || "").replaceAll("_", " ");
+    const receiptNote = order.payment_status === "paid"
+      ? "Payment received. Thank you."
+      : order.payment_status === "refunded" || order.status === "refunded"
+        ? "This order was refunded. Keep this receipt with your records."
+        : order.status === "cancelled"
+          ? "This order was cancelled. No payment is due on delivery."
+          : order.payment_method === "cash_on_delivery"
+            ? "This confirms your order; payment is due on delivery. It is not proof of payment."
+            : "Payment is not marked as paid. Contact Shoeline for details.";
+    return `<section class="receipt-sheet" id="receiptSheet" aria-labelledby="receiptTitle">
+      <div class="receipt-masthead"><div><p class="eyebrow">SHOELINE / ORDER RECEIPT</p><h3 id="receiptTitle">Thank you for your order.</h3></div><div class="receipt-order-ref"><strong>${escapeHtml(order.order_number)}</strong><small>${escapeHtml(orderDate(order.created_at))}</small></div></div>
+      <div class="receipt-details">
+        <div><h4>Deliver to</h4><address>${addressLines.map(line => `<span>${escapeHtml(line)}</span>`).join("")}</address></div>
+        <div><h4>Payment</h4><p>${escapeHtml(paymentMethod)}<br><span>Payment status: ${escapeHtml(order.payment_status)}</span></p></div>
+      </div>
+      <div class="receipt-table-wrap"><table class="receipt-items"><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr></thead><tbody>${itemRows || `<tr><td colspan="4">No item details available.</td></tr>`}</tbody></table></div>
+      <div class="receipt-totals"><div><span>Subtotal</span><strong>${money(order.subtotal)}</strong></div><div><span>Delivery</span><strong>${money(order.shipping_total)}</strong></div><div class="receipt-grand-total"><span>Total</span><strong>${money(order.total)}</strong></div></div>
+      <p class="receipt-note">${escapeHtml(receiptNote)}</p>
+      <div class="receipt-actions"><button class="button button-dark" type="button" data-action="print-receipt">Print or save as PDF</button><button class="button button-outline" type="button" data-action="customer" data-tab="orders">Back to orders</button></div>
+    </section>`;
+  }
+
+  async function showOrderDetails(orderId) {
+    openModal("Tracking your order.", loadingMarkup("Loading your order details…"), { eyebrow: "ORDER STATUS / RECEIPT" });
+    try {
+      const order = await loadCustomerOrder(orderId);
+      openModal(`Order ${order.order_number}`, `${orderProgressMarkup(order)}${orderReceiptMarkup(order)}`, { eyebrow: "ORDER STATUS / RECEIPT" });
+    } catch (error) {
+      openModal("Order details unavailable.", `<div class="empty-state"><p>${escapeHtml(error.message || "Could not load this order.")}</p><button class="button button-outline" type="button" data-action="customer" data-tab="orders">Back to orders</button></div>`, { eyebrow: "ORDER STATUS" });
+      throw error;
+    }
   }
 
   async function openProductReviews(productId) {
@@ -586,7 +684,10 @@
       panel.innerHTML = `<p><strong>${escapeHtml(state.profile.full_name)}</strong><br><span class="notice">${email}</span></p><p class="notice">Your orders, saved pairs and delivery details are yours alone. Sign out from this device when you’re done.</p>${isAdmin() ? `<div class="owner-profile-card"><div><strong>Store owner</strong><small>Manage orders, products, stock and reviews.</small></div><button class="button button-dark" type="button" data-action="customer" data-tab="owner">Open dashboard <span>↗</span></button></div>` : ""}<div class="line-item"><div><strong>Recent orders</strong><small>${orders.length ? `${orders.length} order${orders.length === 1 ? "" : "s"} on your account` : "Your next favorite is just around the corner."}</small></div><button class="switch-button" type="button" data-action="customer" data-tab="orders">View orders →</button></div><div class="line-item"><div><strong>Your wishlist</strong><small>${state.wishlist.size} saved pair${state.wishlist.size === 1 ? "" : "s"}</small></div><button class="switch-button" type="button" data-action="wishlist">Open →</button></div><button class="button button-outline form-submit" type="button" data-action="signout">Sign out</button>`;
     } else if (tab === "orders") {
       const orders = await loadOrders();
-      panel.innerHTML = orders.length ? orders.map(order => `<div class="order-card"><div><strong>${escapeHtml(order.order_number)}</strong><small>${new Date(order.created_at).toLocaleDateString("en-PH")} · ${escapeHtml((order.order_items || []).map(item => `${item.product_name} × ${item.quantity}`).join(", "))}</small><small><span class="status-pill">${escapeHtml(order.status)}</span> · ${escapeHtml(order.payment_status)}</small></div><strong>${money(order.total)}</strong></div>`).join("") : `<div class="cart-empty"><span>↗</span><strong>Your story starts with a first step.</strong><p>Orders you place will appear here.</p></div>`;
+      panel.innerHTML = orders.length ? orders.map(order => `<div class="order-card">
+        <div class="order-card-info"><strong>${escapeHtml(order.order_number)}</strong><small>${escapeHtml(orderDate(order.created_at))}</small><small>${escapeHtml((order.order_items || []).map(item => `${item.product_name} × ${item.quantity}`).join(", "))}</small><small><span class="status-pill">${escapeHtml(order.status)}</span> · ${escapeHtml(order.payment_status)}</small></div>
+        <div class="order-card-actions"><strong>${money(order.total)}</strong><button class="switch-button" type="button" data-action="order-details" data-id="${escapeHtml(order.id)}">Track & receipt <span aria-hidden="true">↗</span></button></div>
+      </div>`).join("") : `<div class="cart-empty"><span>↗</span><strong>Your story starts with a first step.</strong><p>Orders you place will appear here.</p></div>`;
       panel.innerHTML += `<button class="button button-outline form-submit" type="button" data-action="customer" data-tab="returns">Request a return <span>↗</span></button>`;
     } else if (tab === "returns") {
       const orders = await loadOrders();
@@ -1091,6 +1192,8 @@
       showToast("The background music file could not be loaded.", true);
     });
 
+    window.addEventListener("afterprint", () => document.body.classList.remove("print-receipt"));
+
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && state.adminLiveActive) {
         refreshAdminOrders().catch(() => {});
@@ -1120,6 +1223,12 @@
           }
           else if (action === "cart-qty") changeCart(id, Number(delta));
           else if (action === "wishlist") openWishlist();
+          else if (action === "order-details") await showOrderDetails(id);
+          else if (action === "print-receipt") {
+            if (!$("#receiptSheet")) return showToast("The receipt is not available to print.", true);
+            document.body.classList.add("print-receipt");
+            window.print();
+          }
           else if (action === "music-toggle") await toggleBackgroundMusic();
           else if (action === "toggle-wish") await toggleWishlist(id);
           else if (action === "product-reviews") await openProductReviews(id);
